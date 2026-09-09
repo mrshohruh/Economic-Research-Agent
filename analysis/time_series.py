@@ -22,7 +22,9 @@ def pct_change_lag(s: pd.Series, lag: int) -> pd.Series:
     return s.pct_change(periods=lag) * 100.0
 
 
-def compute_change_series(df: pd.DataFrame, date_col: str, col: str, frequency: str | None) -> dict[str, pd.Series]:
+def compute_change_series(df: pd.DataFrame, date_col: str | None, col: str, frequency: str | None) -> dict[str, pd.Series]:
+    if not date_col or date_col not in df.columns or col not in df.columns:
+        return {}
     work = df[[date_col, col]].copy()
     work[date_col] = pd.to_datetime(work[date_col], errors="coerce")
     work = work.dropna(subset=[date_col]).sort_values(date_col)
@@ -47,6 +49,8 @@ def latest_change_stats(df: pd.DataFrame, date_col: str, col: str, frequency: st
                          label_prefix: str = "") -> list[StatResult]:
     series = compute_change_series(df, date_col, col, frequency)
     results: list[StatResult] = []
+    if "level" not in series:
+        return results
     s = series["level"].dropna()
     if s.empty:
         return results

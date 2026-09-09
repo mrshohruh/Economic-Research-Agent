@@ -29,7 +29,8 @@ def load_workbook(file_path: str | Path) -> dict[str, pd.DataFrame]:
     xls = pd.ExcelFile(file_path, engine="openpyxl")
     sheets: dict[str, pd.DataFrame] = {}
     for name in xls.sheet_names:
-        df = xls.parse(name)
+        header_row = _detect_header_row(xls, name)
+        df = xls.parse(name, header=header_row)
         # Blank header cells come back as literal float NaN column labels.
         # These aren't real variables and their NaN label breaks pandas
         # column lookups downstream (KeyError: '[nan] not in index'), so
@@ -40,10 +41,35 @@ def load_workbook(file_path: str | Path) -> dict[str, pd.DataFrame]:
     return sheets
 
 
+def _detect_header_row(xls: pd.ExcelFile, sheet_name: str, max_scan: int = 15) -> int:
+    """Real-world economic spreadsheets often carry title/notes rows above the
+    actual column headers. Read the top of the sheet with no header and pick
+    the first row that looks like a header: mostly non-empty, mostly text, and
+    followed by rows that are more numeric than it is."""
+    raw = xls.parse(sheet_name, header=None, nrows=max_scan + 5)
+    if raw.empty:
+        return 0
+    best_row, best_score = 0, -1.0
+    for i in range(min(max_scan, len(raw) - 1)):
+        row = raw.iloc[i]
+        non_null = row.notna()
+        if non_null.sum() < 2:
+            continue
+        text_frac = sum(isinstance(v, str) for v in row[non_null]) / non_null.sum()
+        below = raw.iloc[i + 1: i + 6]
+        below_numeric = pd.to_numeric(below.stack(), errors="coerce").notna().mean() if not below.empty else 0.0
+        score = non_null.mean() + text_frac + below_numeric
+        if score > best_score:
+            best_row, best_score = i, score
+    return best_row
+
+
 def _looks_like_date_series(s: pd.Series) -> bool:
     if pd.api.types.is_datetime64_any_dtype(s):
         return True
-    if s.dtype == object:
+    # object dtype, or the string/str dtype that newer pandas assigns to text
+    # columns -- both can hold dates stored as text.
+    if s.dtype == object or pd.api.types.is_string_dtype(s):
         sample = s.dropna().astype(str).head(20)
         if sample.empty:
             return False

@@ -13,7 +13,7 @@ def plan_tables(topic: str, sd: SheetData, findings: list[Finding]) -> list[Tabl
     plans: list[TablePlan] = []
     top_vars = _top_variables(findings, sd.numeric_columns)
 
-    if top_vars:
+    if top_vars and sd.date_column:
         plans.append(TablePlan(
             id="T1", title="Latest Indicators and Recent Changes", table_type="latest_indicators",
             variables=top_vars, period="latest available", purpose="Show current levels and MoM/QoQ/YoY changes "
