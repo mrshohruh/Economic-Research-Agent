@@ -114,6 +114,11 @@ def compose(
     # ---- 3. current state ---------------------------------------------
     doc.heading(labels["current"], 1)
     doc.paragraphs(narrative.current_situation)
+
+    section = getattr(analysis, "cross_section", None)
+    if section is not None and section.available:
+        _price_level_section(doc, section, by_kind)
+
     summary_table = _metric_summary_table(analysis)
     if summary_table is not None:
         doc.table(summary_table, title="Indicator dashboard: latest levels and growth",
@@ -136,9 +141,11 @@ def compose(
     _place(doc, by_kind, "seasonality")
 
     # ---- 5. regional ----------------------------------------------------
-    if narrative.regional_analysis or by_kind.get("index") or by_kind.get("ranking"):
+    if narrative.regional_analysis or by_kind.get("index") or by_kind.get("ranking") or section:
         doc.heading(labels["regional"], 1)
         doc.paragraphs(narrative.regional_analysis)
+        if section is not None and section.available:
+            _regional_price_section(doc, section, by_kind)
         _place(doc, by_kind, "index")
         _place(doc, by_kind, "ranking")
         _place(doc, by_kind, "growth_rank")
@@ -248,21 +255,183 @@ def _index_figures(figures: list[Figure]) -> dict[str, list[Figure]]:
     return out
 
 
-def _place(doc: ReportDocument, by_kind: dict[str, list[Figure]], kind: str, limit: int = 1) -> None:
+def _place(doc: ReportDocument, by_kind: dict[str, list[Figure]], kind: str, limit: int = 1,
+           with_table: bool = True) -> None:
     for figure in by_kind.get(kind, [])[:limit]:
-        _emit(doc, figure)
+        _emit(doc, figure, with_table=with_table)
 
 
-def _emit(doc: ReportDocument, figure: Figure) -> None:
+# Kinds whose underlying table is a ranked list, so the row numbers add nothing.
+_NO_INDEX_KINDS = {
+    "ranking", "growth_rank", "timeline", "forecast", "distribution", "category",
+    "cs_region_level", "cs_region_sqm", "cs_region_coverage", "cs_city_level",
+}
+
+
+def _emit(doc: ReportDocument, figure: Figure, with_table: bool = True) -> None:
     if figure.__dict__.get("_placed"):
         return
     figure.__dict__["_placed"] = True
     doc.figure(figure.path, caption=figure.caption, title=figure.title)
-    if figure.table is not None and len(figure.table):
+    if with_table and figure.table is not None and len(figure.table):
         doc.table(figure.table, title=figure.table_title or figure.title,
-                  include_index=figure.kind not in {"ranking", "growth_rank", "timeline", "forecast"},
+                  include_index=figure.kind not in _NO_INDEX_KINDS,
                   index_label="Period" if figure.kind in {"trend", "yoy", "volume", "index", "driver"} else "",
                   max_rows=26)
+
+
+# ---------------------------------------------------------------------------
+# Cross-sectional sections (property microdata)
+# ---------------------------------------------------------------------------
+def _price_level_section(doc: ReportDocument, section: Any, by_kind: dict[str, list[Figure]]) -> None:
+    """What a property costs: the level, the spread, and what moves it."""
+    overall = section.overall
+    label = section.price_label
+    money = _money_unit(section)
+
+    doc.heading(f"What a property costs: {label}", 2)
+    doc.para(
+        f"The sample holds {overall.get('listings', 0):,} individual adverts. "
+        f"The median {label} is {money}{overall.get('median', 0):,.0f}"
+        + (
+            f", or {money}{overall['median_per_sqm']:,.2f} per square metre"
+            if overall.get("median_per_sqm") is not None
+            else ""
+        )
+        + f", on a median floor area of {overall.get('median_area_sqm', 0):,.0f} m². "
+        + (
+            f"The mean of {money}{overall.get('mean', 0):,.0f} sits "
+            f"{overall['skew_mean_over_median_pct']:.0f}% above the median, which is the "
+            "signature of a right-skewed market: a thin band of high-end property pulls the "
+            "average above what a typical household faces. The median is used throughout this "
+            "report for that reason."
+            if overall.get("skew_mean_over_median_pct")
+            else ""
+        )
+    )
+    if section.currency_note:
+        doc.para(section.currency_note, size=9, color=INK_SECONDARY)
+
+    doc.table(
+        _overall_table(overall, label, money),
+        title=f"{label.capitalize()}: distribution across the whole sample",
+        include_index=False,
+        note="Percentiles are computed directly from the listing records. Half of all adverts "
+             "fall between the 25th and 75th percentile.",
+    )
+    _place(doc, by_kind, "distribution")
+
+    for figure in by_kind.get("category", []):
+        _emit(doc, figure)
+
+
+def _regional_price_section(doc: ReportDocument, section: Any, by_kind: dict[str, list[Figure]]) -> None:
+    """Where it is expensive — the question the regional section exists to answer."""
+    region = section.by_region
+    if region is None or region.table.empty:
+        return
+
+    label = section.price_label
+    money = _money_unit(section)
+    top, bottom = region.most_expensive, region.cheapest
+    field_name = region.field_name
+
+    doc.heading(f"Which {field_name} is most expensive", 2)
+    doc.para(
+        f"{top.get(field_name)} is the most expensive {field_name} in the sample, with a median "
+        f"{label} of {money}{top.get('median', 0):,.0f}"
+        + (
+            f" ({money}{top['median_per_sqm']:,.2f} per m²)"
+            if top.get("median_per_sqm") is not None
+            else ""
+        )
+        + f". The cheapest is {bottom.get(field_name)} at {money}{bottom.get('median', 0):,.0f}"
+        + (
+            f" ({money}{bottom['median_per_sqm']:,.2f} per m²)"
+            if bottom.get("median_per_sqm") is not None
+            else ""
+        )
+        + (
+            f", so the most expensive {field_name} runs {region.spread_ratio:.2f} times the cheapest. "
+            if region.spread_ratio
+            else ". "
+        )
+        + (
+            f"Across regions the coefficient of variation of the median is {region.dispersion_pct:.1f}%, "
+            "which measures how unequal the country's markets are in a single number."
+            if region.dispersion_pct is not None
+            else ""
+        )
+    )
+
+    # The charts and this one table say the same thing, so the figures are
+    # emitted without repeating their own copy of the numbers underneath.
+    _place(doc, by_kind, "cs_region_level", with_table=False)
+    doc.table(
+        _region_table(region.table, field_name, label, money),
+        title=f"{label.capitalize()} by {field_name}, ranked most to least expensive",
+        include_index=False,
+        max_rows=30,
+        note=(
+            "Median and mean are computed from the individual adverts in each group. "
+            "“vs national” compares each group's median with the median of the whole sample. "
+            "Groups marked thin hold too few adverts to rank confidently."
+        ),
+    )
+    _place(doc, by_kind, "cs_region_sqm", with_table=False)
+    _place(doc, by_kind, "cs_region_coverage", with_table=False)
+
+    city = section.by_city
+    if city is not None and not city.table.empty and len(city.table) >= 3:
+        _place(doc, by_kind, "cs_city_level", with_table=False)
+        doc.table(
+            _region_table(city.table, city.field_name, label, money),
+            title=f"{label.capitalize()} by city, best-covered cities",
+            include_index=False,
+            max_rows=20,
+            note="Restricted to cities with enough adverts to support a median.",
+        )
+
+
+def _money_unit(section: Any) -> str:
+    return "$" if "USD" in (section.currency_note or "") or "dollar" in (section.currency_note or "") else ""
+
+
+def _overall_table(overall: dict[str, Any], label: str, money: str) -> pd.DataFrame:
+    rows = [
+        ("Listings in the sample", f"{overall.get('listings', 0):,}"),
+        ("Median", f"{money}{overall.get('median', 0):,.0f}"),
+        ("Mean", f"{money}{overall.get('mean', 0):,.0f}"),
+        ("25th percentile", f"{money}{overall.get('p25', 0):,.0f}"),
+        ("75th percentile", f"{money}{overall.get('p75', 0):,.0f}"),
+        ("90th percentile", f"{money}{overall.get('p90', 0):,.0f}"),
+        ("Lowest advert", f"{money}{overall.get('minimum', 0):,.0f}"),
+        ("Highest advert", f"{money}{overall.get('maximum', 0):,.0f}"),
+    ]
+    if overall.get("median_per_sqm") is not None:
+        rows.append(("Median per m²", f"{money}{overall['median_per_sqm']:,.2f}"))
+    if overall.get("median_area_sqm") is not None:
+        rows.append(("Median floor area", f"{overall['median_area_sqm']:,.0f} m²"))
+    if overall.get("median_rooms") is not None:
+        rows.append(("Median rooms", f"{overall['median_rooms']:,.0f}"))
+    return pd.DataFrame(rows, columns=["Statistic", label.capitalize()])
+
+
+def _region_table(table: pd.DataFrame, field_name: str, label: str, money: str) -> pd.DataFrame:
+    """Rename the computed columns into something a reader can scan."""
+    out = pd.DataFrame()
+    out[field_name.capitalize()] = table[field_name].astype(str)
+    out["Listings"] = table["listings"].astype(int)
+    out["Share %"] = table.get("share_of_listings_pct")
+    out[f"Median {label} ({money.strip() or 'level'})"] = table["median"]
+    out["Mean"] = table["mean"]
+    if "median_per_sqm" in table.columns:
+        out["Median per m²"] = table["median_per_sqm"]
+    if "median_area_sqm" in table.columns:
+        out["Median area m²"] = table["median_area_sqm"]
+    out["vs national %"] = table.get("vs_national_pct")
+    out["Sample"] = table.get("sample")
+    return out
 
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,8 @@ from typing import Any
 
 import pandas as pd
 
+from . import listings
+
 LOGGER = logging.getLogger(__name__)
 
 RECORD_KEYS = ("data", "records", "rows", "items", "result", "results", "values", "table")
@@ -31,6 +33,10 @@ class Dataset:
     source: str
     kind: str
     notes: list[str] = field(default_factory=list)
+    # Set when the source was a marketplace listing feed, so the analysis knows
+    # each row is one advert rather than an aggregated statistic.
+    listing_type: str = ""
+    uzs_per_usd: float = 0.0
 
     @property
     def total_rows(self) -> int:
@@ -55,6 +61,7 @@ def load(
     filename: str | None = None,
     connection_url: str | None = None,
     query: str | None = None,
+    uzs_per_usd: float = listings.DEFAULT_UZS_PER_USD,
 ) -> Dataset:
     """Load data from a path, an in-memory blob, or a database connection."""
     if connection_url:
@@ -62,7 +69,7 @@ def load(
 
     if raw_text is not None:
         name = filename or "uploaded"
-        return _load_from_text(raw_text, name)
+        return _load_from_text(raw_text, name, uzs_per_usd=uzs_per_usd)
 
     if path is None:
         raise LoadError("nothing to load: pass a path, raw text, or a connection URL")
@@ -73,7 +80,9 @@ def load(
 
     suffix = p.suffix.lower()
     if suffix in {".json", ".jsonl", ".ndjson", ".sql", ".csv", ".tsv", ".txt"}:
-        return _load_from_text(p.read_text(encoding="utf-8-sig"), p.name, origin=str(p))
+        return _load_from_text(
+            p.read_text(encoding="utf-8-sig"), p.name, origin=str(p), uzs_per_usd=uzs_per_usd
+        )
     if suffix in {".xlsx", ".xls", ".xlsm"}:
         return _load_excel(p)
     if suffix in {".db", ".sqlite", ".sqlite3"}:
@@ -86,14 +95,19 @@ def load(
 
 
 # ---------------------------------------------------------------------------
-def _load_from_text(text: str, name: str, origin: str | None = None) -> Dataset:
+def _load_from_text(
+    text: str,
+    name: str,
+    origin: str | None = None,
+    uzs_per_usd: float = listings.DEFAULT_UZS_PER_USD,
+) -> Dataset:
     origin = origin or name
     suffix = Path(name).suffix.lower()
 
     if suffix == ".sql" or _looks_like_sql(text):
         return _load_sql_script(text, origin)
     if suffix in {".jsonl", ".ndjson"}:
-        return _load_jsonl(text, origin)
+        return _load_jsonl(text, origin, uzs_per_usd)
     if suffix in {".csv", ".tsv"}:
         sep = "\t" if suffix == ".tsv" else None
         notes: list[str] = []
@@ -102,7 +116,7 @@ def _load_from_text(text: str, name: str, origin: str | None = None) -> Dataset:
 
     stripped = text.lstrip()
     if stripped.startswith(("{", "[")):
-        return _load_json_text(text, origin, Path(name).stem)
+        return _load_json_text(text, origin, Path(name).stem, uzs_per_usd)
     if "\n" in text and ("," in text or ";" in text or "\t" in text):
         notes = []
         df = pd.read_csv(io.StringIO(text), sep=None, engine="python")
@@ -119,15 +133,22 @@ def _looks_like_sql(text: str) -> bool:
 # ---------------------------------------------------------------------------
 # JSON
 # ---------------------------------------------------------------------------
-def _load_json_text(text: str, origin: str, stem: str) -> Dataset:
+def _load_json_text(
+    text: str, origin: str, stem: str, uzs_per_usd: float = listings.DEFAULT_UZS_PER_USD
+) -> Dataset:
     try:
         obj = json.loads(text)
     except json.JSONDecodeError as exc:
         # A file of concatenated JSON objects is common enough to be worth a retry.
         try:
-            return _load_jsonl(text, origin)
+            return _load_jsonl(text, origin, uzs_per_usd)
         except Exception:
             raise LoadError(f"invalid JSON: {exc}") from exc
+
+    candidates = obj if isinstance(obj, list) else [obj]
+    marketplace = _as_listing_dataset(candidates, origin, "json", uzs_per_usd)
+    if marketplace is not None:
+        return marketplace
 
     tables, notes = _frames_from_json(obj, stem or "data")
     if not tables:
@@ -135,8 +156,11 @@ def _load_json_text(text: str, origin: str, stem: str) -> Dataset:
     return Dataset(tables, origin, "json", notes)
 
 
-def _load_jsonl(text: str, origin: str) -> Dataset:
+def _load_jsonl(
+    text: str, origin: str, uzs_per_usd: float = listings.DEFAULT_UZS_PER_USD
+) -> Dataset:
     records = []
+    skipped = 0
     for line_no, line in enumerate(text.splitlines(), 1):
         line = line.strip()
         if not line:
@@ -144,12 +168,60 @@ def _load_jsonl(text: str, origin: str) -> Dataset:
         try:
             records.append(json.loads(line))
         except json.JSONDecodeError:
+            skipped += 1
             LOGGER.warning("skipping unparseable JSONL line %s", line_no)
     if not records:
         raise LoadError("no valid JSON lines found")
-    notes: list[str] = []
+
+    # A truncated or interrupted crawl leaves broken lines behind. Silently
+    # dropping them would overstate how complete the sample is.
+    damaged = (
+        [
+            f"{skipped:,} of {skipped + len(records):,} lines in the source file were not valid "
+            "JSON and were skipped, so the records they held are missing from this analysis."
+        ]
+        if skipped
+        else []
+    )
+
+    marketplace = _as_listing_dataset(records, origin, "jsonl", uzs_per_usd)
+    if marketplace is not None:
+        marketplace.notes.extend(damaged)
+        return marketplace
+
+    notes: list[str] = list(damaged)
     frame = _clean(pd.json_normalize(records), notes)
     return Dataset({Path(origin).stem or "data": frame}, origin, "jsonl", notes)
+
+
+def _as_listing_dataset(
+    records: list[Any], origin: str, kind: str, uzs_per_usd: float
+) -> Dataset | None:
+    """Return a one-row-per-advert dataset when the records are a listing feed.
+
+    Without this, ``pd.json_normalize`` reads a paged feed as one row per *page*
+    and buries every advert in an unhashable cell, which leaves the report with
+    no price or region column to analyse.
+    """
+    if not listings.looks_like_listings(records):
+        return None
+    try:
+        table = listings.flatten(records, uzs_per_usd=uzs_per_usd)
+    except Exception as exc:  # pragma: no cover - unexpected feed variant
+        LOGGER.warning("listing feed detected but could not be flattened: %s", exc)
+        return None
+    if table is None:
+        return None
+
+    LOGGER.info("flattened %s adverts from a %s listing feed", len(table.frame), kind)
+    return Dataset(
+        tables={"listings": _clean(table.frame, table.notes)},
+        source=origin,
+        kind=f"{kind} property listings",
+        notes=table.notes,
+        listing_type=table.listing_type,
+        uzs_per_usd=table.uzs_per_usd,
+    )
 
 
 def _frames_from_json(obj: Any, name: str, depth: int = 0) -> tuple[dict[str, pd.DataFrame], list[str]]:

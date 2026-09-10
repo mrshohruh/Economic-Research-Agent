@@ -10,6 +10,9 @@ outputs/
 research_cache/
 .pytest_cache/
 
+# Scraped listing dumps - too large for GitHub (100 MB limit)
+*.jsonl
+
 # Generated deterministically by `python run.py --make-sample`
 sample_data/uz_housing_sample.json
 sample_data/uz_housing_sample.sql

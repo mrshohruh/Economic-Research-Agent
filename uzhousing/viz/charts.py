@@ -286,7 +286,8 @@ class ChartBuilder:
 
     # ------------------------------------------------------------------
     def ranking_bars(self, table: pd.DataFrame, value_col: str, group_col: str,
-                     label: str, unit: str = "", top_n: int = 12) -> Figure | None:
+                     label: str, unit: str = "", top_n: int = 12,
+                     kind: str = "ranking", context: str = "latest period") -> Figure | None:
         data = table.dropna(subset=[value_col]).sort_values(value_col, ascending=True).tail(top_n)
         if len(data) < 2:
             return None
@@ -307,8 +308,8 @@ class ChartBuilder:
         peak = float(np.nanmax(np.abs(data[value_col].to_numpy(dtype=float))))
         ax.set_xlim(0, peak * 1.18)
         theme.finish(ax)
-        theme.title_block(fig, f"{label} by {group_col}, latest period",
-                          unit or "latest observed level")
+        heading = f"{label} by {group_col}" + (f", {context}" if context else "")
+        theme.title_block(fig, heading, unit or "latest observed level")
 
         top, bottom = data.iloc[-1], data.iloc[0]
         ratio = (top[value_col] / bottom[value_col]) if bottom[value_col] else float("nan")
@@ -317,7 +318,7 @@ class ChartBuilder:
             f"{theme.compact(top[value_col])}, {ratio:.1f} times the lowest "
             f"({bottom[group_col]}, {theme.compact(bottom[value_col])})."
         )
-        return self._save(fig, self._next_id(), f"{label} by {group_col}", caption, "ranking",
+        return self._save(fig, self._next_id(), f"{label} by {group_col}", caption, kind,
                           table=data.iloc[::-1].round(2), table_title=f"{label} by {group_col}")
 
     # ------------------------------------------------------------------
@@ -667,6 +668,138 @@ class ChartBuilder:
         )
         return self._save(fig, self._next_id(), f"{label} by segment", caption, "segment",
                           table=grouped.round(2).to_frame(label), table_title=f"{label} by segment")
+
+    # ------------------------------------------------------------------
+    def distribution_hist(
+        self, values: pd.Series, label: str, unit: str = "", bins: int = 40
+    ) -> Figure | None:
+        """Where the mass of the market actually sits.
+
+        A median alone hides whether a market is tightly clustered or split into
+        distinct tiers, so the whole distribution is drawn with the median and
+        mean marked — the gap between the two lines is the skew.
+        """
+        s = pd.Series(values).dropna().astype(float)
+        if len(s) < 50:
+            return None
+
+        # The long right tail of a price distribution would otherwise squeeze
+        # the informative mass into the leftmost two bins.
+        upper = float(s.quantile(0.98))
+        shown = s[s <= upper]
+        hidden = len(s) - len(shown)
+
+        fig, ax = plt.subplots()
+        ax.hist(shown.to_numpy(), bins=bins, color=theme.CATEGORICAL[0],
+                edgecolor=theme.SURFACE, linewidth=0.5, zorder=3)
+
+        median, mean = float(s.median()), float(s.mean())
+        # In a skewed distribution the mean sits just to the right of the median,
+        # so the two labels are stacked rather than written over each other.
+        close = abs(mean - median) < (float(shown.max()) - float(shown.min())) * 0.12
+        for height, (value, name, color, dash) in zip(
+            (0.97, 0.88 if close else 0.97),
+            (
+                (median, "median", theme.CATEGORICAL[1], (0, (4, 3))),
+                (mean, "mean", theme.INK_MUTED, (0, (2, 3))),
+            ),
+        ):
+            if value > upper:
+                continue
+            ax.axvline(value, color=color, linewidth=1.5, linestyle=dash, zorder=5)
+            ax.annotate(f"{name} {theme.compact(value)}", xy=(value, height),
+                        xycoords=("data", "axes fraction"), xytext=(4, 0),
+                        textcoords="offset points", fontsize=7.5, color=color,
+                        ha="left", va="top")
+
+        ax.xaxis.set_major_formatter(theme.smart_formatter(shown.to_numpy()))
+        ax.set_ylabel("number of listings", fontsize=8.5, color=theme.INK_SECONDARY)
+        theme.finish(ax)
+        theme.title_block(fig, f"Distribution of {label}",
+                          f"{len(s):,} listings · {unit or 'level'}")
+
+        p25, p75 = float(s.quantile(0.25)), float(s.quantile(0.75))
+        caption = (
+            f"Half of all listings fall between {theme.compact(p25)} and {theme.compact(p75)}. "
+            f"The median is {theme.compact(median)} against a mean of {theme.compact(mean)}"
+            + (
+                f", so the average is pulled {((mean / median) - 1) * 100:.0f}% above the typical "
+                "listing by a thin upper tail."
+                if median and mean > median
+                else "."
+            )
+        )
+        if hidden:
+            caption += f" The top 2% ({hidden:,} listings, above {theme.compact(upper)}) is off-scale."
+
+        table = pd.DataFrame(
+            [
+                {"Statistic": "10th percentile", "Value": round(float(s.quantile(0.10)), 2)},
+                {"Statistic": "25th percentile", "Value": round(p25, 2)},
+                {"Statistic": "Median", "Value": round(median, 2)},
+                {"Statistic": "Mean", "Value": round(mean, 2)},
+                {"Statistic": "75th percentile", "Value": round(p75, 2)},
+                {"Statistic": "90th percentile", "Value": round(float(s.quantile(0.90)), 2)},
+            ]
+        )
+        return self._save(fig, self._next_id(), f"Distribution of {label}", caption,
+                          "distribution", table=table, table_title=f"{label}: distribution")
+
+    # ------------------------------------------------------------------
+    def category_bars(
+        self,
+        table: pd.DataFrame,
+        category_col: str,
+        value_col: str,
+        label: str,
+        subtitle: str = "",
+        secondary_col: str = "",
+    ) -> Figure | None:
+        """Compare a measure across a handful of named categories.
+
+        Used for attributes that come in a natural order or a short list — the
+        number of rooms, the state of repair — where a ranked bar chart reads
+        better than a distribution.
+        """
+        data = table.dropna(subset=[value_col]) if value_col in table.columns else pd.DataFrame()
+        if len(data) < 2:
+            return None
+        data = data.head(10)
+
+        fig, ax = plt.subplots(figsize=(7.0, 3.4))
+        positions = np.arange(len(data), dtype=float)
+        values = data[value_col].to_numpy(dtype=float)
+        theme.rounded_bars(ax, positions, values, theme.CATEGORICAL[0], width=0.62)
+
+        ax.set_xticks(positions)
+        ax.set_xticklabels([theme.shorten(str(v), 18) for v in data[category_col]],
+                           fontsize=8.5, color=theme.INK_SECONDARY)
+        theme.value_labels(ax, positions, values)
+        ax.yaxis.set_major_formatter(theme.smart_formatter(values))
+        ax.set_ylim(0, float(np.nanmax(values)) * 1.18)
+        theme.finish(ax)
+        theme.title_block(fig, f"{label} by {category_col.replace('_', ' ')}",
+                          subtitle or "median of each group")
+
+        # Bars keep their natural order (1 room, 2 rooms, ...), which is not the
+        # order of their values, so the extremes are found by value rather than
+        # by position — otherwise the caption names the wrong category.
+        top, bottom = data.loc[data[value_col].idxmax()], data.loc[data[value_col].idxmin()]
+        ratio = float(top[value_col]) / float(bottom[value_col]) if float(bottom[value_col]) else float("nan")
+        caption = (
+            f"{top[category_col]} carries the highest {label} at {theme.compact(top[value_col])}, "
+            f"{ratio:.1f} times {bottom[category_col]} at {theme.compact(bottom[value_col])}."
+        )
+        if secondary_col and secondary_col in data.columns:
+            first, last = top[secondary_col], bottom[secondary_col]
+            if pd.notna(first) and pd.notna(last):
+                caption += (
+                    f" Measured per square metre the ordering {'holds' if first > last else 'reverses'}: "
+                    f"{theme.compact(first)} against {theme.compact(last)}."
+                )
+        return self._save(fig, self._next_id(), f"{label} by {category_col.replace('_', ' ')}",
+                          caption, "category", table=data.round(2),
+                          table_title=f"{label} by {category_col.replace('_', ' ')}")
 
     # ------------------------------------------------------------------
     def policy_timeline(self, events: list[dict[str, Any]], title: str = "Policy and macro timeline") -> Figure | None:

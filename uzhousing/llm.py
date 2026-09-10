@@ -55,10 +55,15 @@ class LLM:
         prompt: str,
         system: str = "",
         max_tokens: int = 2000,
-        temperature: float = 0.2,
         retries: int = 2,
     ) -> str:
-        """Return plain text from the model, or raise :class:`LLMUnavailable`."""
+        """Return plain text from the model, or raise :class:`LLMUnavailable`.
+
+        Sampling parameters are deliberately not sent. ``temperature``, ``top_p``
+        and ``top_k`` were removed from the Messages API for the current model
+        generation (Sonnet 5, Opus 5 and later); passing one is rejected outright,
+        which previously disabled every LLM step in the pipeline.
+        """
         if not self.available:
             raise LLMUnavailable(self._last_error or "LLM not configured")
 
@@ -68,7 +73,6 @@ class LLM:
                 kwargs: dict[str, Any] = {
                     "model": self.model,
                     "max_tokens": max_tokens,
-                    "temperature": temperature,
                     "messages": [{"role": "user", "content": prompt}],
                 }
                 if system:
@@ -93,14 +97,13 @@ class LLM:
         prompt: str,
         system: str = "",
         max_tokens: int = 3000,
-        temperature: float = 0.0,
     ) -> Any:
         """Ask for JSON and parse it, tolerating fenced or chatty output."""
         guarded = (
             prompt
             + "\n\nRespond with valid JSON only. No prose, no markdown fences, no commentary."
         )
-        raw = self.complete(guarded, system=system, max_tokens=max_tokens, temperature=temperature)
+        raw = self.complete(guarded, system=system, max_tokens=max_tokens)
         parsed = extract_json(raw)
         if parsed is None:
             raise LLMUnavailable("model did not return parseable JSON")

@@ -33,6 +33,14 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _float_env(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name, "").strip())
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
 @dataclass
 class Settings:
     """Everything the pipeline needs to know about how to run."""
@@ -48,6 +56,11 @@ class Settings:
         default_factory=lambda: PROJECT_ROOT / "knowledge" / "policy_events.json"
     )
     request_timeout: int = 20
+    # Uzbek property is advertised in both som and dollar-linked "у.е.", so a
+    # single rate is needed to put every listing on one currency. Set
+    # UZS_PER_USD to the rate that applied when the data was collected;
+    # otherwise a rerun of an old file is priced at today's rate.
+    uzs_per_usd: float = 12_650.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -66,6 +79,7 @@ class Settings:
             pages_to_read=_int_env("PAGES_TO_READ", 3),
             language=lang,
             output_dir=out_path,
+            uzs_per_usd=_float_env("UZS_PER_USD", 12_650.0),
         )
 
     # -- convenience ---------------------------------------------------

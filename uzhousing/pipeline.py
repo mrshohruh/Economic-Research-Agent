@@ -12,12 +12,13 @@ from typing import Any, Callable
 
 import pandas as pd
 
+from .analysis import cross_section as cross_mod
 from .analysis import drivers as drivers_mod
 from .analysis import metrics as metrics_mod
 from .analysis import regional as regional_mod
 from .analysis import timeseries as ts_mod
 from .config import Settings
-from .ingest import loader, profiler
+from .ingest import listings, loader, profiler
 from .ingest.profiler import PERIODS_PER_YEAR, Understanding
 from .llm import LLM
 from .report import composer
@@ -54,6 +55,7 @@ class AnalysisResult:
     activity_label: str = ""
     activity_drivers: drivers_mod.DriverAnalysis | None = None
     panel: pd.DataFrame = field(default_factory=pd.DataFrame, repr=False)
+    cross_section: cross_mod.CrossSection | None = None
     brief: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
@@ -101,13 +103,22 @@ def run(
     dataset = loader.load(
         data_path, raw_text=raw_text, filename=filename,
         connection_url=connection_url, query=query,
+        uzs_per_usd=settings.uzs_per_usd,
     )
     say(f"Loaded {dataset.total_rows:,} rows across {len(dataset.tables)} table(s) from a {dataset.kind} source.")
+    if dataset.listing_type:
+        say(
+            f"Recognised a property listing feed: {dataset.total_rows:,} individual "
+            f"adverts for {dataset.listing_type}."
+        )
 
     # 2. Understand ---------------------------------------------------------
     say("Working out what the columns mean...")
     understanding = profiler.understand(dataset, llm)
     profile = understanding.primary_profile
+    if dataset.listing_type:
+        _condense_listing_dates(understanding, say)
+        profile = understanding.primary_profile
     say(
         f"Primary table “{understanding.primary}”: {profile.rows:,} rows, "
         f"{len(profile.metric_cols)} indicator(s), {profile.grain} frequency."
@@ -205,12 +216,21 @@ def analyse(understanding: Understanding) -> AnalysisResult:
     result = AnalysisResult(understanding=understanding, notes=list(understanding.notes))
     tidy = understanding.tidy
 
+    # Microdata first. Where each row is one property rather than an aggregated
+    # statistic, the cross-sectional picture — what a dwelling costs, and where —
+    # is the substance of the report and does not depend on having a time series.
+    result.cross_section = _cross_section(understanding)
+    if result.cross_section is not None:
+        result.notes.extend(result.cross_section.notes)
+
     if tidy.empty:
         result.brief = {
             "coverage": _coverage(understanding, pd.Series(dtype=float)),
             "metrics": [],
             "notes": result.notes + ["No time series could be derived, so trend analysis was skipped."],
         }
+        if result.cross_section is not None:
+            result.brief["cross_section"] = result.cross_section.to_dict()
         return result
 
     metric_names = understanding.metrics
@@ -247,10 +267,23 @@ def analyse(understanding: Understanding) -> AnalysisResult:
     roles = {metric: understanding.role_for_metric(metric) for metric in series_map}
     labels = {metric: _label(metric) for metric in series_map}
     per_year = PERIODS_PER_YEAR.get(understanding.primary_profile.grain, 12)
-    result.drivers = drivers_mod.analyse_drivers(
-        result.panel, result.headline_metric, roles,
-        periods_per_year=per_year, target_label=result.headline_label, labels=labels,
-    )
+
+    # A listing feed contains prices and nothing else — no policy rate, no
+    # incomes, no credit. Correlating the price series against the per-square-
+    # metre series derived from it would manufacture a near-perfect coefficient
+    # that explains nothing, so attribution is left to the external evidence.
+    if understanding.dataset.listing_type:
+        result.notes.append(
+            "No candidate drivers could be tested: the source file measures advertised prices "
+            "only and carries no interest rate, income, credit or construction series. The "
+            "explanation of why prices sit where they do therefore rests on the external policy "
+            "and macroeconomic evidence, not on a correlation computed here."
+        )
+    else:
+        result.drivers = drivers_mod.analyse_drivers(
+            result.panel, result.headline_metric, roles,
+            periods_per_year=per_year, target_label=result.headline_label, labels=labels,
+        )
 
     # Prices and activity respond to different things — mortgage rates hit
     # transaction volumes long before they show up in prices — so the main
@@ -266,6 +299,100 @@ def analyse(understanding: Understanding) -> AnalysisResult:
 
     result.brief = _build_brief(understanding, result, series_map)
     return result
+
+
+# Months represented by fewer adverts than this cannot support a monthly average.
+MIN_LISTINGS_PER_MONTH = 50
+
+
+def _condense_listing_dates(
+    understanding: Understanding, say: Callable[[str], None]
+) -> None:
+    """Put listing microdata on a monthly footing before any trend analysis.
+
+    Each advert carries the day it was posted, which the profiler reads as a
+    daily series. Averaging asking prices over a single day early in the sample
+    means averaging two or three adverts, which produces violent swings that a
+    trend line, a break detector and a forecast would all take seriously.
+
+    Collapsing to calendar months and dropping months with too few adverts
+    leaves a series whose movements are large enough to be worth interpreting.
+    The survivorship caveat still applies and is recorded separately.
+    """
+    tidy = understanding.tidy
+    if tidy.empty or "date" not in tidy.columns:
+        return
+
+    tidy = tidy.copy()
+    tidy["date"] = pd.to_datetime(tidy["date"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+    tidy = tidy.dropna(subset=["date"])
+
+    # Keep only the columns that are economic measures. The dwelling attributes
+    # are reported cross-sectionally instead, where they belong.
+    priced = tidy[tidy["metric"].isin(listings.TIME_SERIES_METRICS)]
+    if not priced.empty:
+        dropped_metrics = sorted(set(tidy["metric"]) - set(listings.TIME_SERIES_METRICS))
+        tidy = priced
+        if dropped_metrics:
+            understanding.notes.append(
+                "Dwelling attributes ("
+                + ", ".join(m.replace("_", " ") for m in dropped_metrics[:8])
+                + ") are reported as characteristics of the listings rather than as economic "
+                "indicators. Their movement over time reflects a change in which properties were "
+                "advertised, not a change in the market."
+            )
+
+    # Count adverts, not melted rows: every advert contributes one row per metric.
+    per_month = tidy.groupby("date").size() / max(1, tidy["metric"].nunique())
+    keep = per_month[per_month >= MIN_LISTINGS_PER_MONTH].index
+    dropped = int(per_month.size - len(keep))
+
+    if len(keep) < 3:
+        understanding.tidy = pd.DataFrame(columns=tidy.columns)
+        understanding.notes.append(
+            "Fewer than three months carry enough adverts to average, so no trend analysis "
+            "was attempted. The cross-sectional results are unaffected."
+        )
+        say("Too few well-covered months for trend analysis; reporting the cross-section only.")
+        return
+
+    understanding.tidy = tidy[tidy["date"].isin(keep)].reset_index(drop=True)
+    profile = understanding.primary_profile
+    profile.grain = "monthly"
+    profile.period_start, profile.period_end = min(keep), max(keep)
+
+    note = (
+        f"Adverts were grouped into calendar months for the trend analysis. "
+        f"{len(keep)} month(s) carry at least {MIN_LISTINGS_PER_MONTH} adverts and are used; "
+        f"{dropped} sparser month(s) were excluded as too thin to average."
+    )
+    understanding.notes.append(note)
+    say(f"Trend analysis uses {len(keep)} month(s) with adequate advert coverage.")
+
+
+def _cross_section(understanding: Understanding) -> cross_mod.CrossSection | None:
+    """Run the microdata statistics when the source is one row per property."""
+    dataset = understanding.dataset
+    if not dataset.listing_type:
+        return None
+    frame = dataset.tables.get("listings")
+    if frame is None or frame.empty:
+        return None
+
+    rate = dataset.uzs_per_usd or 0.0
+    currency_note = (
+        "All prices are stated in US dollars. Listings advertised in som were converted at "
+        f"{rate:,.0f} UZS/USD; listings advertised in у.е. are already dollar-denominated."
+        if rate
+        else "All prices are stated in US dollars."
+    )
+    try:
+        return cross_mod.analyse(
+            frame, listing_type=dataset.listing_type, currency_note=currency_note
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        LOGGER.warning("cross-sectional analysis failed: %s", exc)
+        return None
 
 
 def _pick_activity(
@@ -326,6 +453,8 @@ def _build_brief(
         "notes": result.notes,
     }
 
+    if result.cross_section is not None:
+        brief["cross_section"] = result.cross_section.to_dict()
     if result.regional:
         brief["regional"] = {
             **result.regional.to_dict(),
@@ -419,6 +548,19 @@ def build_figures(
 ) -> list[Figure]:
     """Render every chart the data can support. Individual failures are non-fatal."""
     understanding = analysis.understanding
+
+    def attempt(name: str, fn, *args, **kwargs) -> None:
+        try:
+            fn(*args, **kwargs)
+        except Exception as exc:  # pragma: no cover - chart-specific edge cases
+            LOGGER.warning("chart '%s' failed: %s\n%s", name, exc, traceback.format_exc(limit=3))
+            analysis.notes.append(f"The “{name}” chart could not be drawn ({exc}).")
+
+    # Cross-sectional charts come first: on microdata they carry the finding a
+    # reader opens the report for — what a property costs, and where.
+    if analysis.cross_section is not None:
+        _cross_section_figures(builder, analysis.cross_section, attempt)
+
     if not analysis.headline_metric:
         return builder.figures
 
@@ -428,13 +570,6 @@ def build_figures(
     unit = understanding.unit_for_metric(headline)
     series = understanding.national_series(headline)
     events = [e.to_dict() for e in research.policy_events]
-
-    def attempt(name: str, fn, *args, **kwargs) -> None:
-        try:
-            fn(*args, **kwargs)
-        except Exception as exc:  # pragma: no cover - chart-specific edge cases
-            LOGGER.warning("chart '%s' failed: %s\n%s", name, exc, traceback.format_exc(limit=3))
-            analysis.notes.append(f"The “{name}” chart could not be drawn ({exc}).")
 
     attempt("headline trend", builder.trend_line, series, label, unit, events)
 
@@ -506,6 +641,82 @@ def build_figures(
         attempt("policy timeline", builder.policy_timeline, events)
 
     return builder.figures
+
+
+def _cross_section_figures(
+    builder: ChartBuilder,
+    section: cross_mod.CrossSection,
+    attempt: Callable[..., None],
+) -> None:
+    """Charts for the "where is it expensive" question, drawn from the microdata."""
+    label = section.price_label
+    money = "USD" if "USD" in section.currency_note else ""
+    per_month = "/month" if section.listing_type == "rent" else ""
+    level_unit = f"{money}{per_month}".strip() or "level"
+
+    if len(section.prices):
+        attempt(
+            f"distribution of {label}",
+            builder.distribution_hist, section.prices, label, level_unit,
+        )
+
+    region = section.by_region
+    if region is not None and not region.table.empty:
+        # Every region is shown, not a top-12: leaving one off a national
+        # ranking hides exactly the cheapest market a reader wants to find.
+        all_regions = len(region.table)
+        attempt(
+            f"{label} by region",
+            builder.ranking_bars,
+            region.table, "median", region.field_name,
+            f"median {label}", level_unit, all_regions, "cs_region_level",
+            "all listings",
+        )
+        if "median_per_sqm" in region.table.columns:
+            # Per square metre is the comparable measure: a region can look cheap
+            # only because the dwellings advertised there are smaller.
+            attempt(
+                f"{label} per m² by region",
+                builder.ranking_bars,
+                region.table.dropna(subset=["median_per_sqm"]).sort_values("median_per_sqm"),
+                "median_per_sqm", region.field_name,
+                f"median {label} per m²", f"{money} per m²{per_month}".strip(),
+                all_regions, "cs_region_sqm", "all listings",
+            )
+        attempt(
+            "listing coverage by region",
+            builder.ranking_bars,
+            region.table, "listings", region.field_name,
+            "listings in the sample", "number of adverts",
+            all_regions, "cs_region_coverage", "sample coverage",
+        )
+
+    city = section.by_city
+    if city is not None and not city.table.empty and len(city.table) >= 3:
+        attempt(
+            f"{label} by city",
+            builder.ranking_bars,
+            city.table, "median", city.field_name,
+            f"median {label}", level_unit, 15, "cs_city_level",
+            "best-covered cities",
+        )
+
+    if not section.by_rooms.empty:
+        attempt(
+            f"{label} by dwelling size",
+            builder.category_bars,
+            section.by_rooms, "size_band", "median", f"median {label}",
+            "median of each size band · price per m² in the table below",
+            "median_per_sqm",
+        )
+
+    if not section.by_condition.empty:
+        attempt(
+            f"{label} by condition",
+            builder.category_bars,
+            section.by_condition, "condition", "median", f"median {label}",
+            "median of each state of repair", "median_per_sqm",
+        )
 
 
 # ---------------------------------------------------------------------------

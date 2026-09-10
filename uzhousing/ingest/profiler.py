@@ -324,6 +324,16 @@ def classify_column(series: pd.Series) -> tuple[str, str, float, str]:
     """Assign a semantic role from the column name, then sanity-check values."""
     name = str(series.name).lower()
 
+    # Keys are settled before anything else. "listing_id" contains "listing",
+    # which otherwise matches the transaction-count pattern and turns a row
+    # identifier into a measured indicator the report then charts and forecasts.
+    if re.search(r"^(id|uuid|key|code|kod|index|row_number|no)$|(_id|_uuid|_code|_key)$", name):
+        return "identifier", "", 0.9, "column name is a row key, not a measure"
+
+    # A true/false flag is a category however pandas stores it.
+    if pd.api.types.is_bool_dtype(series):
+        return "category", "", 0.8, "boolean flag"
+
     for pattern, role, unit in ROLE_PATTERNS:
         if re.search(pattern, name):
             # A "rate"-named column holding huge numbers is a level, not a percent.

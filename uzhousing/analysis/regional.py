@@ -20,6 +20,10 @@ class GroupComparison:
     spread_ratio: float | None = None
     convergence: str = "unclear"
     note: str = ""
+    # Which column the ranking was built on. Reporting the leaders with a
+    # different column than they were sorted by lists a decline first under the
+    # heading "strongest".
+    ranked_by: str = "change_pct"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -31,6 +35,7 @@ class GroupComparison:
             "spread_ratio": self.spread_ratio,
             "convergence": self.convergence,
             "note": self.note,
+            "ranked_by": self.ranked_by,
         }
 
 
@@ -87,7 +92,9 @@ def compare_groups(
     sort_key = "yoy_pct" if table["yoy_pct"].notna().sum() >= 2 else "change_pct"
     ranked = table.sort_values(sort_key, ascending=False, na_position="last")
 
-    comparison = GroupComparison(metric=metric, group_field=group_field, table=ranked)
+    comparison = GroupComparison(
+        metric=metric, group_field=group_field, table=ranked, ranked_by=sort_key
+    )
     comparison.leaders = ranked.head(top_n).to_dict("records")
     comparison.laggards = ranked.tail(top_n).iloc[::-1].to_dict("records")
 

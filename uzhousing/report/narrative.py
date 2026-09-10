@@ -26,14 +26,22 @@ quantitative and free of filler.
 
 Hard rules:
 1. Every number you write must come from the brief. Never invent, round up, or extrapolate a figure.
-2. When you attribute a trend to a cause, say what kind of evidence supports it: a computed \
-correlation, a documented policy, or your own reasoned judgement. Label judgement as judgement.
+2. Keep three kinds of statement visibly separate:
+   (a) what the dataset shows — already computed for you in the brief, quote it exactly;
+   (b) what external evidence shows — the policy events, macro factors and cited sources;
+   (c) your interpretation joining the two. Interpretation is written as a plausible mechanism, \
+not as a demonstrated cause: "mortgage lending expanded over the same period, which is a \
+plausible channel through which credit growth supported demand" — never "mortgage policy caused \
+prices to rise".
 3. Correlation is not causation, and you say so where it matters.
 4. Prefer specific mechanisms ("a 3pp rise in the policy rate raised mortgage servicing costs, \
 which shows up as a fall in transaction volumes two quarters later") over vague statements \
 ("market conditions worsened").
 5. If the evidence for something is thin, say the evidence is thin. Never pad.
-6. Write in flowing professional prose. No bullet-point fragments inside paragraphs."""
+6. Write in flowing professional prose. No bullet-point fragments inside paragraphs.
+7. Call the measured quantity exactly what the brief calls it. If the brief reports a monthly \
+asking rent, every sentence says rent — never "house price", "property price" or "sale price". \
+If it reports asking prices from listings, say advertised asking prices, not transaction prices."""
 
 LANGUAGE_NAMES = {"en": "English", "ru": "Russian", "uz": "Uzbek (Latin script)"}
 
@@ -107,11 +115,21 @@ Section guidance:
 - executive_summary: 3-4 paragraphs a deputy minister could read alone and act on. Lead with the
   single most important quantitative finding.
 - key_findings: 5-8 one-sentence findings, each containing a specific number from the brief.
-- current_situation: where the market stands now - latest levels, latest growth, momentum.
+- current_situation: where the market stands now. When the brief carries a "cross_section" block,
+  this section leads with it: the median and mean price level, the gap between them and what that
+  says about skew, the spread from the 25th to the 75th percentile, price per square metre, and how
+  price varies with dwelling size and condition. State the sample size. Only then turn to growth.
 - historical_trends: the shape of the whole sample. Name the turning points and structural breaks
-  in the brief by date and say what changed at each.
-- regional_analysis: leaders, laggards, dispersion, whether regions are converging or diverging.
-  Omit this section's content entirely (empty list) if the brief has no regional breakdown.
+  in the brief by date and say what changed at each. If the brief's notes warn that the time
+  dimension comes from listing dates rather than a price index, say so plainly here and treat any
+  apparent trend as provisional.
+- regional_analysis: which region is most expensive and which is cheapest, by how much, and what
+  the ratio between them is - take these from "cross_section.by_region" when it is present, naming
+  the regions and quoting their medians. Then cover dispersion, the share of listings each region
+  holds, and whether the level ranking survives when measured per square metre (a region can look
+  cheap only because the dwellings advertised there are smaller). Flag any region the brief marks
+  as a thin sample. Omit this section's content entirely (empty list) only if the brief has no
+  regional breakdown at all.
 - drivers: THE core section. For each major trend, give the reason. Use the correlation and
   regression results, the policy events, and the macro factors. Distinguish what the data shows
   from what you are inferring. Where the statistics are weak, say the attribution is judgement.
@@ -145,7 +163,7 @@ Return JSON of exactly this shape:
   "limitations": ["caveat", "..."]
 }}"""
 
-    result = llm.complete_json(prompt, system=SYSTEM, max_tokens=16000, temperature=0.3)
+    result = llm.complete_json(prompt, system=SYSTEM, max_tokens=16000)
     if not isinstance(result, dict):
         raise LLMUnavailable("narrative was not a JSON object")
 
@@ -190,6 +208,7 @@ def write_fallback(brief: dict[str, Any]) -> Narrative:
     drivers = brief.get("drivers") or {}
     research = brief.get("research") or {}
     coverage = brief.get("coverage") or {}
+    section = brief.get("cross_section") or {}
 
     label = headline.get("label", "the headline indicator")
     latest = _num(headline.get("latest"))
@@ -205,6 +224,9 @@ def write_fallback(brief: dict[str, Any]) -> Narrative:
         f"across {coverage.get('metrics', 0)} measured indicators"
         + (f" and {coverage.get('regions', 0)} regions." if coverage.get("regions", 0) > 1 else ".")
     )
+    # Where the source is property microdata, the price level and its regional
+    # spread are the report's substance and lead every relevant section.
+    _write_cross_section(n, section)
     if latest is not None:
         sentence = f"{label} stands at {_fmt(latest)} in the latest period"
         if yoy is not None:
@@ -333,16 +355,25 @@ def write_fallback(brief: dict[str, Any]) -> Narrative:
     laggards = regional.get("laggards") or []
     if leaders:
         field_name = regional.get("group_field", "region")
-        n.regional_analysis.append(
-            f"Ranking {field_name}s by growth, the strongest are "
-            + ", ".join(f"{r.get(field_name)} ({_num(r.get('change_pct')):+.1f}%)" for r in leaders[:3] if _num(r.get("change_pct")) is not None)
-            + (
-                ". The weakest are "
-                + ", ".join(f"{r.get(field_name)} ({_num(r.get('change_pct')):+.1f}%)" for r in laggards[:3] if _num(r.get("change_pct")) is not None)
-                if laggards else ""
+        # Quote the column the ranking was actually built on, or the "strongest"
+        # regions get listed alongside a number that does not order them.
+        ranked_by = regional.get("ranked_by", "change_pct")
+        basis = "year-on-year growth" if ranked_by == "yoy_pct" else "change over the full sample"
+
+        def named(records: list[dict[str, Any]]) -> str:
+            return ", ".join(
+                f"{r.get(field_name)} ({_num(r.get(ranked_by)):+.1f}%)"
+                for r in records[:3]
+                if _num(r.get(ranked_by)) is not None
             )
-            + "."
-        )
+
+        strongest, weakest = named(leaders), named(laggards)
+        if strongest:
+            n.regional_analysis.append(
+                f"Ranking {field_name}s by {basis}, the strongest are {strongest}"
+                + (f". The weakest are {weakest}" if weakest else "")
+                + "."
+            )
     if regional.get("spread_ratio"):
         n.regional_analysis.append(
             f"The highest {regional.get('group_field', 'region')} sits {regional['spread_ratio']}× the lowest "
@@ -416,6 +447,28 @@ def write_fallback(brief: dict[str, Any]) -> Narrative:
             )
         elif regression.get("note"):
             n.drivers.append(regression["note"])
+
+    if not n.drivers:
+        # An empty attribution section reads as an omission. Saying why nothing
+        # could be tested is itself a finding, and it tells the reader exactly
+        # how much weight the policy and macro sections below are carrying.
+        n.drivers.append(
+            "No candidate driver could be tested against "
+            f"{label} within this dataset, because the source file measures prices and the "
+            "physical characteristics of the properties themselves — it carries no interest "
+            "rate, income, mortgage, construction-cost or credit series to correlate against. "
+            "Any attribution in this report therefore rests on documented policy measures and "
+            "published macroeconomic evidence, set alongside the computed price statistics, "
+            "rather than on a relationship estimated from the file."
+        )
+        if section.get("by_region"):
+            n.drivers.append(
+                "What the data does establish is the size and structure of the differences: the "
+                "regional, size and condition tables above quantify how much of the variation in "
+                "price is associated with location, floor area and the state of the dwelling. "
+                "Those are measured associations within a single snapshot, not estimates of how "
+                "price would respond to a change in any of them."
+            )
 
     # -- policy and macro from research ------------------------------------
     events = research.get("policy_events") or []
@@ -526,12 +579,140 @@ def write_fallback(brief: dict[str, Any]) -> Narrative:
             "Web research returned no sources for this run, so the policy and macro sections draw only "
             "on the local knowledge file."
         )
-    n.limitations.extend(brief.get("notes") or [])
+    # The ingestion and processing notes are printed in full under "Data quality
+    # notes" in section 2. Repeating all of them verbatim here made the
+    # limitations section twice as long as it needed to be, so it points there.
+    if brief.get("notes"):
+        n.limitations.append(
+            f"A further {len(brief['notes'])} data-handling note(s) — records dropped, currency "
+            "conversion, coverage thresholds and the columns excluded from the trend analysis — "
+            "are listed in full under “Data quality notes” in section 2. Each one narrows what "
+            "the figures above cover."
+        )
     n.limitations.append(
         "Correlation and regression results describe association within this sample. They are not "
         "causal estimates and should not be used as elasticities for policy simulation."
     )
     return n
+
+
+def _write_cross_section(n: Narrative, section: dict[str, Any]) -> None:
+    """Prose for the price level and its regional spread, from computed numbers only."""
+    overall = section.get("overall") or {}
+    if not overall:
+        return
+
+    label = section.get("price_label", "advertised price")
+    money = "$" if "USD" in str(section.get("currency_note", "")) else ""
+    listings = overall.get("listings", 0)
+    median, mean = _num(overall.get("median")), _num(overall.get("mean"))
+    if median is None:
+        return
+
+    lead = (
+        f"Across {listings:,} individual adverts the median {label} is {money}{median:,.0f}"
+        + (
+            f", or {money}{overall['median_per_sqm']:,.2f} per square metre"
+            if overall.get("median_per_sqm") is not None
+            else ""
+        )
+        + (
+            f" on a median floor area of {overall['median_area_sqm']:,.0f} m²"
+            if overall.get("median_area_sqm") is not None
+            else ""
+        )
+        + "."
+    )
+    skew = _num(overall.get("skew_mean_over_median_pct"))
+    if mean is not None and skew is not None:
+        lead += (
+            f" The mean of {money}{mean:,.0f} sits {skew:.0f}% above the median, so the "
+            "distribution is right-skewed and the median is the figure that describes what a "
+            "typical household faces."
+        )
+    n.executive_summary.append(lead)
+    n.current_situation.insert(0, lead)
+
+    p25, p75 = _num(overall.get("p25")), _num(overall.get("p75"))
+    if p25 is not None and p75 is not None:
+        n.current_situation.append(
+            f"Half of all adverts fall between {money}{p25:,.0f} and {money}{p75:,.0f}; the "
+            f"tenth of the market above {money}{_num(overall.get('p90')) or 0:,.0f} is what "
+            "stretches the average."
+        )
+    n.key_findings.insert(
+        0, f"The median {label} across {listings:,} adverts is {money}{median:,.0f}."
+    )
+
+    region = section.get("by_region") or {}
+    top, bottom = region.get("most_expensive") or {}, region.get("cheapest") or {}
+    field_name = region.get("group_field", "region")
+    if top and bottom:
+        ratio = _num(region.get("spread_ratio"))
+        sentence = (
+            f"{top.get(field_name)} is the most expensive {field_name} at a median of "
+            f"{money}{_num(top.get('median')) or 0:,.0f}, against {bottom.get(field_name)} at "
+            f"{money}{_num(bottom.get('median')) or 0:,.0f}"
+            + (f" — a ratio of {ratio:.2f} to one." if ratio else ".")
+        )
+        n.regional_analysis.insert(0, sentence)
+        n.executive_summary.append(sentence)
+        # Key findings are scanned, not read, so this one is compressed rather
+        # than repeated word for word from the summary above.
+        n.key_findings.insert(
+            1,
+            f"{top.get(field_name)} is the most expensive {field_name} and "
+            f"{bottom.get(field_name)} the cheapest"
+            + (f", a gap of {ratio:.2f} times." if ratio else "."),
+        )
+
+        per_sqm_top, per_sqm_bottom = _num(top.get("median_per_sqm")), _num(bottom.get("median_per_sqm"))
+        if per_sqm_top is not None and per_sqm_bottom is not None:
+            n.regional_analysis.append(
+                f"Measured per square metre the same ordering holds — {money}{per_sqm_top:,.2f} "
+                f"against {money}{per_sqm_bottom:,.2f} — so the gap reflects the price of space "
+                "itself rather than larger dwellings being advertised in the leading market."
+                if per_sqm_top > per_sqm_bottom
+                else
+                f"Per square metre the ordering reverses ({money}{per_sqm_top:,.2f} against "
+                f"{money}{per_sqm_bottom:,.2f}), which means the level gap is driven by dwelling "
+                "size rather than by the price of space."
+            )
+        share = _num(top.get("share_of_listings_pct"))
+        if share is not None and share > 50:
+            n.regional_analysis.append(
+                f"{top.get(field_name)} also supplies {share:.0f}% of all adverts in the sample, so "
+                "the national median describes that market far more than it describes the country. "
+                "Regional figures below should be read as separate markets, not as deviations from "
+                "a meaningful national average."
+            )
+
+    dispersion = _num(region.get("dispersion_pct"))
+    if dispersion is not None:
+        n.regional_analysis.append(
+            f"The coefficient of variation across regional medians is {dispersion:.1f}%, which is the "
+            f"single-number measure of how unequal these markets are."
+        )
+
+    rooms = section.get("by_rooms") or []
+    if len(rooms) >= 2:
+        first, last = rooms[0], rooms[-1]
+        first_sqm, last_sqm = _num(first.get("median_per_sqm")), _num(last.get("median_per_sqm"))
+        if first_sqm is not None and last_sqm is not None:
+            n.current_situation.append(
+                f"Price per square metre falls from {money}{first_sqm:,.2f} for a "
+                f"{first.get('size_band')} dwelling to {money}{last_sqm:,.2f} for a "
+                f"{last.get('size_band')} one."
+                + (
+                    " That is the expected pattern — larger dwellings command a lower unit price — "
+                    "and it is a useful check that the size and price fields are being read correctly."
+                    if first_sqm > last_sqm
+                    else " That inversion is unusual and suggests the size bands are picking up "
+                    "location rather than size."
+                )
+            )
+    # The cross-section's own caveats already reach the limitations section
+    # through the brief's shared notes list; adding them here would print twice.
 
 
 def _fallback_recommendations(
