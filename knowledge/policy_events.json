@@ -1,0 +1,78 @@
+{
+  "_readme": [
+    "Local record of policy and macro events that shape the Uzbek housing market.",
+    "The agent merges these with live web research. Entries here are treated as",
+    "prior knowledge and are labelled in the report by their `confidence` value.",
+    "",
+    "Add your own entries freely - this file is meant to be edited. Fields:",
+    "  date            ISO date the measure took effect or was announced (required)",
+    "  title           short name of the measure",
+    "  category        policy | monetary | fiscal | macro | regulatory | demographic",
+    "  summary         one or two sentences on what it did",
+    "  expected_impact how it should move housing demand, supply, prices or credit",
+    "  direction       positive | negative | mixed | neutral  (effect on housing prices)",
+    "  confidence      high | medium | low - how sure you are of the details",
+    "  still_in_force  true if it still shapes the market outside the data window",
+    "  source          URL backing the entry (strongly recommended)",
+    "",
+    "Set \"example\": true on any entry you want the agent to ignore."
+  ],
+  "events": [
+    {
+      "date": "2017-09-05",
+      "title": "Foreign exchange liberalisation",
+      "category": "monetary",
+      "summary": "Uzbekistan abolished the multiple exchange rate system and let the som float, unifying the official and parallel market rates.",
+      "expected_impact": "Repriced imported construction materials and dollar-denominated savings, and reset the som value of housing. Marks the start of the modern, market-priced housing cycle.",
+      "direction": "mixed",
+      "confidence": "high",
+      "still_in_force": true,
+      "source": "https://lex.uz/docs/3326423"
+    },
+    {
+      "date": "2019-11-18",
+      "title": "Transition of the Central Bank to inflation targeting",
+      "category": "monetary",
+      "summary": "A presidential decree set out the Central Bank's move to an inflation-targeting regime, making the policy rate the main instrument of monetary policy.",
+      "expected_impact": "Made mortgage rates responsive to the policy rate, so housing demand became sensitive to monetary policy decisions.",
+      "direction": "mixed",
+      "confidence": "high",
+      "still_in_force": true,
+      "source": "https://lex.uz/docs/4592973"
+    },
+    {
+      "date": "2019-01-01",
+      "title": "Uzbekistan Mortgage Refinancing Company (UzMRC)",
+      "category": "policy",
+      "summary": "A state-backed mortgage refinancing institution was set up with international financial institution support to give banks long-term funding for housing loans.",
+      "expected_impact": "Lengthens mortgage tenors and expands lending capacity, supporting demand for primary-market housing.",
+      "direction": "positive",
+      "confidence": "medium",
+      "still_in_force": true,
+      "source": "https://uzmrc.uz/"
+    },
+    {
+      "date": "2024-05-01",
+      "title": "Energy tariff liberalisation",
+      "category": "fiscal",
+      "summary": "Regulated electricity and gas tariffs were raised substantially as part of the phased withdrawal of energy subsidies.",
+      "expected_impact": "Raises construction and building-material costs and squeezes household budgets, pushing new-build costs up while weakening affordability.",
+      "direction": "mixed",
+      "confidence": "medium",
+      "still_in_force": true,
+      "source": "https://www.gazeta.uz/"
+    },
+    {
+      "date": "2030-01-01",
+      "title": "EXAMPLE ENTRY - copy this shape for your own records",
+      "category": "policy",
+      "summary": "Describe the measure here.",
+      "expected_impact": "Describe the expected effect on the housing market here.",
+      "direction": "neutral",
+      "confidence": "low",
+      "still_in_force": false,
+      "source": "",
+      "example": true
+    }
+  ]
+}

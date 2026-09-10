@@ -1,162 +1,224 @@
-# AI Economic Research Agent (V1)
+# Uzbekistan Housing Market Research Agent
 
-An AI-powered research assistant that takes an XLSX dataset and a research
-question, and produces a professional economic research report (DOCX) with
-tables, figures, and evidence-based interpretation.
-
-It is built around this logic:
+Give it housing data as **JSON or SQL** (CSV, Excel and live databases work too). It reads the
+data, works out what every column means, computes the statistics, researches the policy and
+macroeconomic backdrop on the web, and writes a **formatted Word report** with figures, tables,
+explanations of the trends, and recommendations.
 
 ```
-XLSX + Research Topic
-  -> Understand the data
-  -> Validate the data
-  -> Analyze quantitatively (Python does the arithmetic, not the LLM)
-  -> Detect economically important changes
-  -> Build a research plan
-  -> Generate hypotheses
-  -> Research historical/current policy & news
-  -> Collect traceable evidence (no fabricated sources)
-  -> Evaluate competing explanations
-  -> Plan and generate tables/figures
-  -> Write grounded economic analysis for every table/figure
-  -> Assemble the report
-  -> Fact-check (hedge unsupported causal language)
-  -> DOCX report
+python run.py --data sample_data/uz_housing_sample.json
 ```
 
-## What was built
+---
 
-A modular Python application with:
+## What it actually does
 
-- **`data/`** — XLSX ingestion (any sheet layout), variable/date/frequency
-  detection, unit inference, and a validation engine (missing values,
-  duplicates, structural breaks, irregular frequency).
-- **`analysis/`** — a pure pandas/numpy/scipy quantitative engine: descriptive
-  stats, MoM/QoQ/YoY changes, trend/turning-point detection, anomaly (z-score)
-  detection, historical comparisons, correlation/lead-lag/regression.
-- **`agents/`** — the logical multi-agent pipeline: `quantitative_agent`
-  (finds economically important changes and ranks them), `research_planner`
-  (builds the research plan + hypotheses *before* any web search),
-  `research_agent` (executes searches, links evidence to hypotheses),
-  `economist_agent` (applies the right economic framework — inflation,
-  labor, external, fiscal — and writes cautious, evidence-graded narrative),
-  `visualization_agent`, `report_writer`, `fact_checker`.
-- **`research/`** — pluggable web search (DuckDuckGo by default, no API key
-  needed), source-quality ranking (Central Bank / stats agency / IMF /
-  World Bank / Reuters etc. ranked above generic sources), evidence
-  structuring, and policy-timeline extraction.
-- **`visualization/`** — a visualization *planner* (decides what's actually
-  needed for the topic, not a fixed chart set), a matplotlib figure
-  generator, and a pandas table generator. Every table/figure gets a
-  grounded, LLM-or-template analysis paragraph referencing the real numbers.
-- **`reporting/`** — a `python-docx` report generator producing a formatted
-  DOCX with headings, embedded tables/figures, captions, source notes,
-  a references section, and page numbers.
-- **`models/schemas.py`** — Pydantic schemas used everywhere instead of
-  free-form text, so every claim is traceable (Data → Calculation →
-  Interpretation → Confidence).
-- **`storage/database.py`** — SQLite run log + a JSON snapshot of every run
-  under `outputs/runs/`.
-- **`app.py`** — the Streamlit UI (topic box, XLSX upload, research option
-  checkboxes, live progress through the 10 pipeline stages, human review of
-  findings/tables/figures with per-finding exclude checkboxes, DOCX download).
-- **`pipeline.py`** — the single orchestrator used by both the UI and tests.
-- **`sample_data/generate_synthetic_data.py`** — generates a clearly-labeled
-  **synthetic** monthly macro dataset (inflation components, exchange rate,
-  policy rate, wages, industrial production, trade) with a deliberate food-
-  inflation "bump" so the anomaly-detection logic has something to find.
-- **`tests/test_pipeline.py`** — unit tests covering ingestion, date/frequency
-  detection, validation, YoY/trend/anomaly analysis, research-plan and
-  hypothesis generation, table/figure generation, and fact-checker behavior.
+| Stage | What happens |
+|---|---|
+| **1. Ingest** | Parses JSON (nested, column-oriented, multi-table), `.sql` dumps (replayed into SQLite, with MySQL/Postgres syntax cleaned up), SQLite files, CSV, Excel, or a live SQLAlchemy database. Normalises column names and coerces text like `"1 234,5"` and `"12%"` into numbers. |
+| **2. Understand** | Assigns a semantic role to every column — date, region, segment, price, price per m², transaction volume, supply, mortgage, rate, income, inflation, FX — using name patterns in **English, Russian and Uzbek** plus value checks. With an API key, Claude reviews and corrects the mapping. Picks the most informative table and reshapes it into a tidy panel, merging metrics from supporting tables. |
+| **3. Analyse** | Levels, period and year-on-year growth, YTD, CAGR, volatility, drawdown from peak. Linear trend test, STL seasonal decomposition, structural-break detection, turning points, Holt-Winters projection. Regional ranking, dispersion, σ-convergence and concentration. |
+| **4. Explain** | Tests every other indicator against the headline series **and** against the main activity series, on year-on-year growth rates, with lead/lag scanning, then fits a multivariate OLS regression. Excludes same-family and collinear regressors so the coefficients mean something. |
+| **5. Research** | Searches the web (DuckDuckGo, no key needed) across eight themes — market state, housing policy, mortgage programmes, monetary policy, macro drivers, construction costs, risks, regional dynamics — in English, Russian and Uzbek. Downloads the best pages and, with an API key, synthesises them into cited findings and a dated policy timeline. |
+| **6. Report** | Renders up to 15 charts and writes a Word document: cover page, table of contents, 13 numbered sections, numbered figures and tables, a policy table, a recommendations table, sources with working hyperlinks, and page numbers. |
 
-## Central design principle
+---
 
-The system never does `XLSX -> LLM -> summary`. All arithmetic runs in
-Python (`analysis/`, `agents/quantitative_agent.py`). The LLM (when
-configured) is only used for: refining ambiguous variable definitions,
-improving research-plan wording, generating/ranking hypotheses, and writing
-the grounded narrative prose around numbers Python already computed. Every
-narrative passes through `agents/fact_checker.py`, which softens causal
-language ("caused" -> "may have contributed to") whenever the supporting
-hypothesis confidence isn't `high`.
+## Quick start
 
-**The system runs completely without any API key.** With no
-`ANTHROPIC_API_KEY` set, every agent falls back to deterministic,
-template-based text generation, so the full V1 pipeline (ingestion through
-DOCX) still works end-to-end. Setting the key upgrades narrative quality and
-reasoning without changing the pipeline's structure.
-
-## How to run
-
-```powershell
-# from the project directory
-python -m venv .venv        # optional but recommended
-.venv\Scripts\activate
+```bash
+# 1. Install
+python -m venv .venv
+.venv\Scripts\activate            # Windows
+# source .venv/bin/activate       # macOS / Linux
 pip install -r requirements.txt
 
-# generate the synthetic test dataset (writes sample_data/synthetic_inflation_data.xlsx)
-python sample_data/generate_synthetic_data.py
+# 2. (Optional) add your API key
+copy .env.example .env            # then paste your key into ANTHROPIC_API_KEY
 
-# run the test suite
-python -m unittest discover tests -v
+# 3. Try it on the sample data
+python run.py --make-sample
+python run.py --data sample_data/uz_housing_sample.json
+```
 
-# optional: run the full pipeline once from the CLI (no browser needed) and
-# produce outputs/reports/synthetic_inflation_data_report.docx directly
-python run_demo.py
+The report lands in `outputs/reports/`, the charts in `outputs/figures/`, and a full JSON
+record of the run in `outputs/runs/`.
 
-# launch the app
+### Web interface
+
+```bash
 streamlit run app.py
 ```
 
-Then in the browser UI:
-1. Paste a research topic, e.g. *"Analyze the recent inflation dynamics and
-   identify the main factors behind the decline in headline inflation."*
-2. Upload `sample_data/synthetic_inflation_data.xlsx` (or your own XLSX).
-3. Click **START RESEARCH** and watch the 10-stage progress list.
-4. Review findings/tables/figures, optionally exclude a finding, then
-   download the generated DOCX report.
+Upload a file, pick your settings, watch the analysis run, browse the figures, and download the
+`.docx`.
 
-## API keys / configuration
+---
 
-Copy `.env.example` to `.env` and fill in what you have:
+## Using your own data
+
+**Nothing needs to be in a particular shape.** The agent inspects whatever you give it. These all
+work:
+
+<details>
+<summary>A flat list of records</summary>
+
+```json
+[
+  {"date": "2024-01", "region": "Tashkent", "avg_price_per_sqm_usd": 1180, "transactions": 640},
+  {"date": "2024-02", "region": "Tashkent", "avg_price_per_sqm_usd": 1195, "transactions": 705}
+]
+```
+</details>
+
+<details>
+<summary>Several named tables in one file</summary>
+
+```json
+{
+  "regional_housing": [ {...}, {...} ],
+  "macro_indicators": [ {...}, {...} ]
+}
+```
+Metrics from the second table are merged in automatically, so mortgage rates and wages become
+available as candidate drivers of prices.
+</details>
+
+<details>
+<summary>Column-oriented, or wrapped in a payload</summary>
+
+```json
+{"data": {"date": ["2024-01", "2024-02"], "price": [1180, 1195]}}
+```
+</details>
+
+<details>
+<summary>A SQL dump</summary>
+
+```sql
+CREATE TABLE prices (date TEXT, region TEXT, price_per_sqm REAL);
+INSERT INTO prices VALUES ('2024-01-01', 'Samarkand', 640);
+```
+Run with `--data dump.sql`. MySQL and PostgreSQL dumps are cleaned up before replay.
+</details>
+
+Russian and Uzbek column names are recognised directly — `narx`, `viloyat`, `sana`, `цена`,
+`область`, `дата`, `ипотека`, `ставка` and many others.
+
+### Command line
+
+```bash
+python run.py --data FILE            # JSON, SQL, SQLite, CSV, Excel
+python run.py --db URL --query SQL   # any SQLAlchemy database
+python run.py --data FILE --no-web   # skip web research (offline, fully reproducible)
+python run.py --data FILE --lang ru  # report in Russian (en | ru | uz)
+python run.py --data FILE --title "Tashkent Primary Market Review"
+python run.py --data FILE --model claude-opus-5
+python run.py --make-sample          # write a demo dataset and exit
+python run.py --help                 # everything else
+```
+
+---
+
+## Does it need an API key?
+
+**No.** The pipeline runs end to end without one and still produces a complete report with every
+chart, every table and every computed statistic. What you lose is the written analysis: the
+narrative comes from a deterministic template instead, and web sources are presented as an
+organised, ranked evidence digest rather than a synthesis.
+
+With `ANTHROPIC_API_KEY` set, Claude additionally:
+
+- reviews and corrects the inferred column mapping,
+- reads the retrieved pages and writes a cited policy and macro synthesis,
+- builds a dated policy timeline with expected transmission channels,
+- writes all thirteen report sections, including the reasoning behind each trend and the
+  recommendations.
+
+The report always states which mode produced it, in section 2.
+
+---
+
+## Keeping the policy knowledge current
+
+`knowledge/policy_events.json` is a plain, editable record of measures affecting the market. The
+agent merges it with what it finds on the web and labels each entry by confidence. Add your own
+entries — the file documents its own schema, and every field is explained inline.
+
+---
+
+## Layout
 
 ```
-ANTHROPIC_API_KEY=       # optional — enables LLM-backed writing/reasoning
-ANTHROPIC_MODEL=claude-sonnet-5
-SEARCH_PROVIDER=duckduckgo   # "duckduckgo" (no key needed) or "none"
+run.py                       CLI entry point
+app.py                       Streamlit interface
+knowledge/policy_events.json editable policy record
+sample_data/generate.py      synthetic demo dataset (JSON + SQL)
+uzhousing/
+  config.py                  settings from .env
+  llm.py                     Anthropic wrapper, degrades cleanly without a key
+  pipeline.py                orchestration
+  cli.py                     argument parsing
+  ingest/
+    loader.py                JSON / SQL / SQLite / CSV / Excel / database
+    profiler.py              semantic column roles, date parsing, tidying
+  analysis/
+    metrics.py               levels, growth, CAGR, volatility
+    timeseries.py            trend, seasonality, breaks, turning points, forecast
+    regional.py              ranking, dispersion, convergence, concentration
+    drivers.py               correlation, lead/lag, regression attribution
+  research/
+    websearch.py             DuckDuckGo search + page reading, cached
+    knowledge.py             research agenda and local policy record
+    context.py               synthesis into cited findings
+  viz/
+    theme.py                 palette, matplotlib defaults, drawing helpers
+    charts.py                the chart factory
+  report/
+    narrative.py             LLM writer + deterministic fallback
+    docx_builder.py          Word primitives (tables, figures, TOC, hyperlinks)
+    composer.py              assembles the 13-section report
+tests/test_pipeline.py       end-to-end and unit tests
 ```
 
-Nothing is hard-coded; `.env` is git-ignored.
+---
 
-## What remains to be improved (post-V1)
+## Report contents
 
-- PDF export (DOCX is implemented; PDF via `reportlab` is a natural follow-on).
-- A richer "Regenerate" flow in the UI that re-runs from cached artifacts
-  instead of requiring the file to be re-uploaded.
-- Swapping DuckDuckGo for a paid, higher-reliability search/news API for
-  production use, plus real publication-date extraction (many DuckDuckGo
-  results don't return a structured date, which is passed through honestly
-  as `None`/"n.d." rather than guessed).
-- A persistent RAG/policy-database layer instead of live search per run.
-- Multi-language report output (Uzbek/Russian), multi-country support.
-- LLM-based, contradiction-aware hypothesis confidence scoring (current
-  evidence-to-hypothesis linking is keyword-overlap based when no LLM key
-  is set — functional, but cruder than a real semantic match).
+1. Executive summary and key findings
+2. Data and methodology — including the inferred column roles, so the reader can check the agent's interpretation
+3. Current state of the market
+4. Historical trends and turning points
+5. Regional and segment analysis
+6. What is driving the market
+7. Policy environment and its transmission
+8. Macroeconomic and external context
+9. Outlook
+10. Recommendations — each naming who should act, what to do, and the evidence behind it
+11. Risks
+12. Limitations and data quality
+13. Sources
 
-## Where things live
+---
 
-| Concern | File |
-|---|---|
-| Orchestration | `pipeline.py` |
-| UI | `app.py` |
-| Schemas | `models/schemas.py` |
-| Config / API keys | `config/settings.py`, `.env` |
-| Quantitative engine | `analysis/*.py`, `agents/quantitative_agent.py` |
-| Research plan & hypotheses | `agents/research_planner.py` |
-| Web research & evidence | `research/*.py`, `agents/research_agent.py` |
-| Economic interpretation | `agents/economist_agent.py` |
-| Tables & figures | `visualization/*.py`, `agents/visualization_agent.py` |
-| Report assembly | `agents/report_writer.py`, `reporting/*.py` |
-| Fact-checking | `agents/fact_checker.py` |
-| Run logs | `storage/database.py`, `outputs/runs/*.json` |
-| Outputs | `outputs/reports/`, `outputs/figures/`, `outputs/tables/` |
+## Notes on method
+
+- **Correlations are computed on year-on-year growth rates**, not levels. Two independently
+  trending series correlate strongly in levels for no meaningful reason. Overlapping year-on-year
+  windows are serially correlated, so p-values are used as a ranking device and the report says so.
+- **No dual-axis charts.** Two series on different scales get two stacked panels sharing a time
+  axis, or are indexed to a common base.
+- **Every figure ships with its numbers**, so nothing depends on reading a colour correctly.
+- **The report never claims causation** from a correlation, and labels every attribution as
+  statistical evidence, documented policy, or judgement.
+- **Charts use a colour-vision-deficiency-validated palette** in fixed slot order.
+
+## Testing
+
+```bash
+python -m pytest tests/ -v
+```
+
+## Licence
+
+MIT

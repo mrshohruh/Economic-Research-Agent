@@ -1,7 +1,15 @@
 .env
+.venv/
 __pycache__/
 *.pyc
+*.pyo
 outputs/
-.venv/
-*.db
 .streamlit/
+*.db-journal
+.cache/
+research_cache/
+.pytest_cache/
+
+# Generated deterministically by `python run.py --make-sample`
+sample_data/uz_housing_sample.json
+sample_data/uz_housing_sample.sql

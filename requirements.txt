@@ -1,14 +1,28 @@
-streamlit>=1.37
+# Core data stack
 pandas>=2.2
 numpy>=1.26
-openpyxl>=3.1
 scipy>=1.13
 statsmodels>=0.14
+
+# Ingestion
+openpyxl>=3.1
+SQLAlchemy>=2.0
+
+# Visualisation
 matplotlib>=3.9
+
+# Reporting
 python-docx>=1.1
-reportlab>=4.2
+
+# LLM
+anthropic>=0.40
 python-dotenv>=1.0
-pydantic>=2.7
-duckduckgo-search>=6.2
-anthropic>=0.34
-tabulate>=0.9
+
+# Web research
+ddgs>=9.0
+requests>=2.32
+beautifulsoup4>=4.12
+lxml>=5.2
+
+# UI
+streamlit>=1.37
