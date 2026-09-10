@@ -109,6 +109,93 @@ class TestLoader:
         with pytest.raises(loader.LoadError):
             loader.load(tmp_path / "nope.json")
 
+    def test_json_arrays_in_a_field_do_not_break_profiling(self, tmp_path):
+        """Regression: list cells are unhashable and used to crash nunique()."""
+        path = tmp_path / "nested.json"
+        path.write_text(json.dumps([
+            {
+                "date": f"2024-{m:02d}",
+                "region": "Tashkent",
+                "avg_price_per_sqm_usd": 1000 + m * 10,
+                "transactions": 500 + m,
+                "tags": ["primary", "urban"],
+                "breakdown": {"rooms": [1, 2, 3]},
+                "empty": [],
+            }
+            for m in range(1, 13)
+        ]))
+
+        dataset = loader.load(path)
+        frame = next(iter(dataset.tables.values()))
+        assert not frame["tags"].map(lambda v: isinstance(v, list)).any()
+        assert frame["tags"].iloc[0] == '["primary", "urban"]'
+        assert any("lists or nested objects" in note for note in dataset.notes)
+
+        # The whole understanding step must survive it.
+        result = profiler.understand(dataset, None)
+        assert "avg_price_per_sqm_usd" in result.metrics
+        assert result.primary_profile.date_col == "date"
+
+    def test_sets_and_tuples_are_encoded_too(self, tmp_path):
+        path = tmp_path / "odd.csv"
+        path.write_text("a,b\n1,2\n3,4\n")
+        frame = next(iter(loader.load(path).tables.values()))
+        frame["c"] = [(1, 2), {"x"}]
+        assert loader._flatten_containers(frame) == ["c"]
+        assert frame["c"].iloc[0] == "[1, 2]"
+
+    def test_parallel_arrays_are_expanded_into_rows(self, tmp_path):
+        path = tmp_path / "parallel.json"
+        path.write_text(json.dumps([
+            {
+                "region": "Tashkent",
+                "date": ["2024-01", "2024-02", "2024-03"],
+                "avg_price_per_sqm_usd": [1000, 1010, 1025],
+            },
+            {
+                "region": "Samarkand",
+                "date": ["2024-01", "2024-02", "2024-03"],
+                "avg_price_per_sqm_usd": [700, 705, 715],
+            },
+        ]))
+
+        dataset = loader.load(path)
+        frame = next(iter(dataset.tables.values()))
+        assert len(frame) == 6
+        assert frame["avg_price_per_sqm_usd"].dtype.kind in "if"
+        assert set(frame["region"]) == {"Tashkent", "Samarkand"}
+        assert any("parallel arrays" in note for note in dataset.notes)
+
+        result = profiler.understand(dataset, None)
+        assert "avg_price_per_sqm_usd" in result.metrics
+        assert result.regions == ["Samarkand", "Tashkent"]
+
+    def test_a_single_list_column_is_not_exploded(self, tmp_path):
+        """Exploding one array alone would duplicate and double-count the measures."""
+        path = tmp_path / "tags.json"
+        path.write_text(json.dumps([
+            {"date": "2024-01", "price": 100, "tags": ["a", "b"]},
+            {"date": "2024-02", "price": 110, "tags": ["c"]},
+        ]))
+        frame = next(iter(loader.load(path).tables.values()))
+        assert len(frame) == 2
+        assert frame["price"].sum() == 210
+
+    def test_ragged_arrays_are_left_alone(self, tmp_path):
+        path = tmp_path / "ragged.json"
+        path.write_text(json.dumps([
+            {"region": "A", "date": ["2024-01", "2024-02"], "price": [1, 2, 3]},
+        ]))
+        frame = next(iter(loader.load(path).tables.values()))
+        assert len(frame) == 1  # stringified rather than mis-expanded
+
+    def test_safe_nunique_handles_unhashable_values(self):
+        series = pd.Series([["a"], ["a"], ["b"]], name="tags")
+        with pytest.raises(TypeError):
+            series.nunique()
+        assert profiler.safe_nunique(series) == 2
+        assert len(profiler.safe_unique(series)) == 2
+
     def test_sql_split_ignores_semicolons_in_strings(self):
         statements = loader._split_statements("INSERT INTO t VALUES ('a;b'); SELECT 1;")
         assert len(statements) == 2

@@ -278,10 +278,29 @@ def profile_table(name: str, df: pd.DataFrame) -> TableProfile:
     return profile
 
 
+def safe_nunique(series: pd.Series) -> int:
+    """``nunique`` that survives unhashable cells such as lists or dicts.
+
+    The loader normally encodes containers as text before anything gets here, but
+    ``understand`` is public API and may be handed a raw DataFrame.
+    """
+    try:
+        return int(series.nunique(dropna=True))
+    except TypeError:
+        return int(series.dropna().astype(str).nunique())
+
+
+def safe_unique(series: pd.Series, limit: int = 5) -> list[Any]:
+    try:
+        return series.dropna().unique()[:limit].tolist()
+    except TypeError:
+        return series.dropna().astype(str).unique()[:limit].tolist()
+
+
 def _profile_column(series: pd.Series) -> ColumnProfile:
     role, unit, confidence, reason = classify_column(series)
     non_null = int(series.notna().sum())
-    samples = series.dropna().unique()[:5].tolist()
+    samples = safe_unique(series)
     prof = ColumnProfile(
         name=str(series.name),
         dtype=str(series.dtype),
@@ -291,7 +310,7 @@ def _profile_column(series: pd.Series) -> ColumnProfile:
         reason=reason,
         non_null=non_null,
         missing_pct=round(float(series.isna().mean() * 100), 2),
-        unique=int(series.nunique(dropna=True)),
+        unique=safe_nunique(series),
         samples=[_jsonable(v) for v in samples],
     )
     if pd.api.types.is_numeric_dtype(series) and non_null:
@@ -317,11 +336,11 @@ def classify_column(series: pd.Series) -> tuple[str, str, float, str]:
             return role, unit, 0.85, f"column name matched /{pattern}/"
 
     # Nothing matched by name: fall back to the values themselves.
-    if _plausible_dates(series) and series.nunique() > 2:
+    if _plausible_dates(series) and safe_nunique(series) > 2:
         return "date", "", 0.5, "values parse as dates"
     if pd.api.types.is_numeric_dtype(series):
         return "value", "", 0.3, "unnamed numeric measure"
-    if series.nunique(dropna=True) <= max(20, len(series) * 0.05):
+    if safe_nunique(series) <= max(20, len(series) * 0.05):
         return "category", "", 0.4, "low-cardinality text"
     return "text", "", 0.2, "free text"
 
@@ -343,7 +362,7 @@ def _pick_date_column(df: pd.DataFrame, columns: list[ColumnProfile]) -> str | N
         if _find_col(df, r"^(year|yil|год)$") and _find_col(df, r"^(month|oy|месяц|quarter|chorak|квартал)$"):
             return _find_col(df, r"^(year|yil|год)$")
         return None
-    return max(candidates, key=lambda c: (c.confidence, df[c.name].nunique())).name
+    return max(candidates, key=lambda c: (c.confidence, safe_nunique(df[c.name]))).name
 
 
 def _pick_by_role(df: pd.DataFrame, columns: list[ColumnProfile], role: str) -> str | None:
