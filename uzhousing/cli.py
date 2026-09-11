@@ -21,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
   python run.py --data sample_data/uz_housing_sample.json
+  python run.py --data C:\\data\\Tashkent      # every supported file in the folder
   python run.py --data dump.sql --title "Tashkent Primary Market Review"
   python run.py --data market.sqlite --query "SELECT * FROM prices WHERE year >= 2019"
   python run.py --db "postgresql://user:pw@host/db" --query "SELECT * FROM housing"
@@ -29,7 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
 """,
     )
     source = parser.add_argument_group("data source")
-    source.add_argument("--data", "-d", help="path to a .json, .sql, .sqlite, .csv or .xlsx file")
+    source.add_argument(
+        "--data", "-d",
+        help="path to a .json, .sql, .sqlite, .csv or .xlsx file, or a folder of them",
+    )
     source.add_argument("--db", help="SQLAlchemy database URL, e.g. postgresql://user:pw@host/db")
     source.add_argument("--query", "-q", help="SQL query to run against --db or a SQLite --data file")
 
@@ -44,6 +48,8 @@ def build_parser() -> argparse.ArgumentParser:
     behaviour.add_argument("--api-key", help="Anthropic API key (overrides .env)")
     behaviour.add_argument("--results", type=int, help="search results per query (default: 6)")
     behaviour.add_argument("--pages", type=int, help="pages to download per theme (default: 3)")
+    behaviour.add_argument("--max-rows", type=int, metavar="N",
+                           help="row budget held in memory (default: 400000; 0 for no limit)")
 
     misc = parser.add_argument_group("other")
     misc.add_argument("--make-sample", action="store_true",
@@ -88,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
         settings.search_results_per_query = args.results
     if args.pages:
         settings.pages_to_read = args.pages
+    if args.max_rows is not None:
+        settings.max_rows = max(0, args.max_rows)
 
     def progress(message: str) -> None:
         print(f"  {message}", flush=True)

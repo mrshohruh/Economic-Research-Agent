@@ -103,7 +103,7 @@ def run(
     dataset = loader.load(
         data_path, raw_text=raw_text, filename=filename,
         connection_url=connection_url, query=query,
-        uzs_per_usd=settings.uzs_per_usd,
+        uzs_per_usd=settings.uzs_per_usd, max_rows=settings.max_rows,
     )
     say(f"Loaded {dataset.total_rows:,} rows across {len(dataset.tables)} table(s) from a {dataset.kind} source.")
     if dataset.listing_type:

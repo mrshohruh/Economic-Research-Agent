@@ -102,6 +102,25 @@ INSERT INTO prices VALUES ('2024-01-01', 'Samarkand', 640);
 Run with `--data dump.sql`. MySQL and PostgreSQL dumps are cleaned up before replay.
 </details>
 
+<details>
+<summary>A whole folder of files</summary>
+
+```
+Tashkent/
+  olx_house_price_2024_1.db
+  olx_house_price_2024_2.db
+  olx_house_price_2024_3.db
+```
+Point `--data` at the folder. Every supported file in it (subfolders included) is read, and
+tables that share a shape are stacked into a single series covering the whole period. Files that
+cannot be read are listed in the report rather than stopping the run.
+
+Millions of rows will not fit in memory at once, so above `--max-rows` (400,000 by default) the
+loader reads every *n*th row instead, spread evenly across the data, and the report states the
+sample size. Averages, shares and trends are unaffected; counts and totals scale down with the
+sample. Use `--max-rows 0` to read everything.
+</details>
+
 Russian and Uzbek column names are recognised directly — `narx`, `viloyat`, `sana`, `цена`,
 `область`, `дата`, `ипотека`, `ставка` and many others.
 
@@ -109,6 +128,8 @@ Russian and Uzbek column names are recognised directly — `narx`, `viloyat`, `s
 
 ```bash
 python run.py --data FILE            # JSON, SQL, SQLite, CSV, Excel
+python run.py --data FOLDER          # every supported file in it, stacked into one dataset
+python run.py --data FOLDER --max-rows 0   # read every row (default budget: 400,000)
 python run.py --db URL --query SQL   # any SQLAlchemy database
 python run.py --data FILE --no-web   # skip web research (offline, fully reproducible)
 python run.py --data FILE --lang ru  # report in Russian (en | ru | uz)

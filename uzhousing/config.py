@@ -61,6 +61,10 @@ class Settings:
     # UZS_PER_USD to the rate that applied when the data was collected;
     # otherwise a rerun of an old file is priced at today's rate.
     uzs_per_usd: float = 12_650.0
+    # A folder of quarterly dumps can hold several million adverts, which is
+    # more than a laptop can hold in memory at once. Rows above this budget are
+    # thinned evenly across the source and the report says so. 0 means no cap.
+    max_rows: int = 400_000
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -80,6 +84,7 @@ class Settings:
             language=lang,
             output_dir=out_path,
             uzs_per_usd=_float_env("UZS_PER_USD", 12_650.0),
+            max_rows=max(0, _int_env("MAX_ROWS", 400_000)),
         )
 
     # -- convenience ---------------------------------------------------

@@ -203,6 +203,113 @@ class TestLoader:
 
 
 # ---------------------------------------------------------------------------
+# Folders
+# ---------------------------------------------------------------------------
+def _write_quarter_db(path: Path, year: int, rows: int, start: int = 0) -> Path:
+    """A quarterly SQLite dump shaped like the OLX exports."""
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE prices (date TEXT, region TEXT, price REAL)")
+    conn.executemany(
+        "INSERT INTO prices VALUES (?, ?, ?)",
+        [
+            (f"{year}-{1 + i % 12:02d}", "Tashkent", 1000.0 + start + i)
+            for i in range(rows)
+        ],
+    )
+    conn.commit()
+    conn.close()
+    return path
+
+
+class TestDirectoryLoading:
+    def test_reads_every_file_in_a_folder(self, tmp_path):
+        folder = tmp_path / "quarters"
+        folder.mkdir()
+        _write_quarter_db(folder / "prices_2023.db", 2023, 40)
+        _write_quarter_db(folder / "prices_2024.db", 2024, 60, start=1000)
+
+        dataset = loader.load(folder)
+        assert dataset.total_rows == 100
+        assert list(dataset.tables) == ["prices"]  # same shape, stacked into one
+        assert dataset.source == str(folder)
+        assert any("2 of 2 data files" in note for note in dataset.notes)
+
+    def test_mixed_formats_are_combined(self, tmp_path):
+        folder = tmp_path / "mixed"
+        folder.mkdir()
+        _write_quarter_db(folder / "prices.db", 2023, 10)
+        (folder / "extra.csv").write_text("date,region,price\n2024-01,Andijan,900\n")
+
+        dataset = loader.load(folder)
+        assert dataset.total_rows == 11
+        assert set(dataset.tables) == {"prices", "extra"}
+
+    def test_unreadable_files_are_reported_not_fatal(self, tmp_path):
+        folder = tmp_path / "partly_broken"
+        folder.mkdir()
+        _write_quarter_db(folder / "good.db", 2023, 10)
+        (folder / "broken.json").write_text("{not json at all")
+
+        dataset = loader.load(folder)
+        assert dataset.total_rows == 10
+        assert any("could not be read" in note and "broken.json" in note
+                   for note in dataset.notes)
+
+    def test_empty_folder_explains_itself(self, tmp_path):
+        folder = tmp_path / "nothing"
+        folder.mkdir()
+        (folder / "notes.pdf").write_text("not data")
+
+        with pytest.raises(loader.LoadError) as excinfo:
+            loader.load(folder)
+        assert "no supported data files" in str(excinfo.value)
+        assert ".pdf" in str(excinfo.value)
+
+    def test_row_budget_thins_evenly_and_says_so(self, tmp_path):
+        """Millions of adverts will not fit in memory, so the loader samples."""
+        folder = tmp_path / "big"
+        folder.mkdir()
+        _write_quarter_db(folder / "a.db", 2023, 500)
+        _write_quarter_db(folder / "b.db", 2024, 500, start=5000)
+
+        dataset = loader.load(folder, max_rows=100)
+        assert 0 < dataset.total_rows <= 100
+        assert dataset.source_rows == 1000
+
+        frame = dataset.tables["prices"]
+        assert set(frame["date"].str[:4]) == {"2023", "2024"}  # both files survive
+        note = dataset.notes[0]
+        assert "1,000 rows" in note and "--max-rows 0" in note
+
+    def test_no_budget_reads_everything(self, tmp_path):
+        folder = tmp_path / "small"
+        folder.mkdir()
+        _write_quarter_db(folder / "a.db", 2023, 250)
+
+        dataset = loader.load(folder, max_rows=0)
+        assert dataset.total_rows == 250
+        assert not any("--max-rows" in note for note in dataset.notes)
+
+    def test_tables_of_different_shapes_stay_separate(self, tmp_path):
+        import sqlite3
+
+        folder = tmp_path / "shapes"
+        folder.mkdir()
+        _write_quarter_db(folder / "a.db", 2023, 5)
+        conn = sqlite3.connect(folder / "b.db")
+        conn.execute("CREATE TABLE prices (quite TEXT, different TEXT, columns TEXT)")
+        conn.executemany("INSERT INTO prices VALUES (?, ?, ?)", [("x", "y", "z")])
+        conn.commit()
+        conn.close()
+
+        dataset = loader.load(folder)
+        assert len(dataset.tables) == 2
+        assert dataset.total_rows == 6
+
+
+# ---------------------------------------------------------------------------
 # Profiling
 # ---------------------------------------------------------------------------
 class TestProfiler:
