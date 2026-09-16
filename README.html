@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.10.18">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>readme</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="README_files/libs/clipboard/clipboard.min.js"></script>
+<script src="README_files/libs/quarto-html/quarto.js" type="module"></script>
+<script src="README_files/libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="README_files/libs/quarto-html/popper.min.js"></script>
+<script src="README_files/libs/quarto-html/tippy.umd.min.js"></script>
+<script src="README_files/libs/quarto-html/anchor.min.js"></script>
+<link href="README_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="README_files/libs/quarto-html/quarto-syntax-highlighting-64a204ab8560d761af7679ceaba22944.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="README_files/libs/bootstrap/bootstrap.min.js"></script>
+<link href="README_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="README_files/libs/bootstrap/bootstrap-215b371544c282197b31c8aa00ce3677.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+
+
+</head>
+
+<body class="fullcontent quarto-light">
+
+<div id="quarto-content" class="page-columns page-rows-contents page-layout-article">
+
+<main class="content" id="quarto-document-content">
+
+
+
+
+<section id="uzbekistan-housing-market-research-agent" class="level1">
+<h1>Uzbekistan Housing Market Research Agent</h1>
+<p>Give it housing data as <strong>JSON or SQL</strong> (CSV, Excel and live databases work too). It reads the data, works out what every column means, computes the statistics, researches the policy and macroeconomic backdrop on the web, and writes a <strong>formatted Word report</strong> with figures, tables, explanations of the trends, and recommendations.</p>
+<pre><code>python run.py --data sample_data/uz_housing_sample.json</code></pre>
+<hr>
+<section id="what-it-actually-does" class="level2">
+<h2 class="anchored" data-anchor-id="what-it-actually-does">What it actually does</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Stage</th>
+<th>What happens</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>1. Ingest</strong></td>
+<td>Parses JSON (nested, column-oriented, multi-table), <code>.sql</code> dumps (replayed into SQLite, with MySQL/Postgres syntax cleaned up), SQLite files, CSV, Excel, or a live SQLAlchemy database. Normalises column names and coerces text like <code>"1 234,5"</code> and <code>"12%"</code> into numbers. Recognises <strong>property-marketplace listing feeds</strong> (OLX-style pages of adverts with their attributes in a <code>params</code> array) and lifts them into one row per listing — price, currency, region, city, floor area, rooms — converting som and dollar-linked “у.е.” onto a single currency and detecting whether the feed is rentals or sales.</td>
+</tr>
+<tr class="even">
+<td><strong>2. Understand</strong></td>
+<td>Assigns a semantic role to every column — date, region, segment, price, price per m², transaction volume, supply, mortgage, rate, income, inflation, FX — using name patterns in <strong>English, Russian and Uzbek</strong> plus value checks. With an API key, Claude reviews and corrects the mapping. Picks the most informative table and reshapes it into a tidy panel, merging metrics from supporting tables.</td>
+</tr>
+<tr class="odd">
+<td><strong>3. Analyse</strong></td>
+<td><strong>Cross-section</strong> (property microdata): median and mean price by region and city, price per m², price by dwelling size and state of repair, percentiles and skew, which region is most expensive and by what ratio, with thin samples flagged rather than silently ranked. <strong>Time series</strong>: levels, period and year-on-year growth, YTD, CAGR, volatility, drawdown from peak; linear trend test, STL seasonal decomposition, structural-break detection, turning points, Holt-Winters projection; regional ranking, dispersion, σ-convergence and concentration. Every number in the report is computed here by pandas — the language model interprets these tables, it never produces the figures in them.</td>
+</tr>
+<tr class="even">
+<td><strong>4. Explain</strong></td>
+<td>Tests every other indicator against the headline series <strong>and</strong> against the main activity series, on year-on-year growth rates, with lead/lag scanning, then fits a multivariate OLS regression. Excludes same-family and collinear regressors so the coefficients mean something.</td>
+</tr>
+<tr class="odd">
+<td><strong>5. Research</strong></td>
+<td>Searches the web (DuckDuckGo, no key needed) across eight themes — market state, housing policy, mortgage programmes, monetary policy, macro drivers, construction costs, risks, regional dynamics — in English, Russian and Uzbek. Downloads the best pages and, with an API key, synthesises them into cited findings and a dated policy timeline.</td>
+</tr>
+<tr class="even">
+<td><strong>6. Report</strong></td>
+<td>Renders up to 15 charts and writes a Word document: cover page, table of contents, 13 numbered sections, numbered figures and tables, a policy table, a recommendations table, sources with working hyperlinks, and page numbers.</td>
+</tr>
+</tbody>
+</table>
+<hr>
+</section>
+<section id="quick-start" class="level2">
+<h2 class="anchored" data-anchor-id="quick-start">Quick start</h2>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb2"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 1. Install</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> venv .venv</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="ex">.venv\Scripts\activate</span>            <span class="co"># Windows</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="co"># source .venv/bin/activate       # macOS / Linux</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install <span class="at">-r</span> requirements.txt</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="co"># 2. (Optional) add your API key</span></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="ex">copy</span> .env.example .env            <span class="co"># then paste your key into ANTHROPIC_API_KEY</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a><span class="co"># 3. Try it on the sample data</span></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> run.py <span class="at">--make-sample</span></span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> run.py <span class="at">--data</span> sample_data/uz_housing_sample.json</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>The report lands in <code>outputs/reports/</code>, the charts in <code>outputs/figures/</code>, and a full JSON record of the run in <code>outputs/runs/</code>.</p>
+<section id="web-interface" class="level3">
+<h3 class="anchored" data-anchor-id="web-interface">Web interface</h3>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb3"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">streamlit</span> run app.py</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>Upload a file, pick your settings, watch the analysis run, browse the figures, and download the <code>.docx</code>.</p>
+<hr>
+</section>
+</section>
+<section id="using-your-own-data" class="level2">
+<h2 class="anchored" data-anchor-id="using-your-own-data">Using your own data</h2>
+<p><strong>Nothing needs to be in a particular shape.</strong> The agent inspects whatever you give it. These all work:</p>
+<details>
+<summary>
+A flat list of records
+</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode json code-with-copy"><code class="sourceCode json"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ot">[</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">{</span><span class="dt">"date"</span><span class="fu">:</span> <span class="st">"2024-01"</span><span class="fu">,</span> <span class="dt">"region"</span><span class="fu">:</span> <span class="st">"Tashkent"</span><span class="fu">,</span> <span class="dt">"avg_price_per_sqm_usd"</span><span class="fu">:</span> <span class="dv">1180</span><span class="fu">,</span> <span class="dt">"transactions"</span><span class="fu">:</span> <span class="dv">640</span><span class="fu">}</span><span class="ot">,</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">{</span><span class="dt">"date"</span><span class="fu">:</span> <span class="st">"2024-02"</span><span class="fu">,</span> <span class="dt">"region"</span><span class="fu">:</span> <span class="st">"Tashkent"</span><span class="fu">,</span> <span class="dt">"avg_price_per_sqm_usd"</span><span class="fu">:</span> <span class="dv">1195</span><span class="fu">,</span> <span class="dt">"transactions"</span><span class="fu">:</span> <span class="dv">705</span><span class="fu">}</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="ot">]</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
+<details>
+<summary>
+Several named tables in one file
+</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb5"><pre class="sourceCode json code-with-copy"><code class="sourceCode json"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">"regional_housing"</span><span class="fu">:</span> <span class="ot">[</span> <span class="fu">{</span><span class="er">...</span><span class="fu">}</span><span class="ot">,</span> <span class="fu">{</span><span class="er">...</span><span class="fu">}</span> <span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">"macro_indicators"</span><span class="fu">:</span> <span class="ot">[</span> <span class="fu">{</span><span class="er">...</span><span class="fu">}</span><span class="ot">,</span> <span class="fu">{</span><span class="er">...</span><span class="fu">}</span> <span class="ot">]</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+Metrics from the second table are merged in automatically, so mortgage rates and wages become available as candidate drivers of prices.
+</details>
+<details>
+<summary>
+Column-oriented, or wrapped in a payload
+</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode json code-with-copy"><code class="sourceCode json"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">"data"</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">"date"</span><span class="fu">:</span> <span class="ot">[</span><span class="st">"2024-01"</span><span class="ot">,</span> <span class="st">"2024-02"</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">"price"</span><span class="fu">:</span> <span class="ot">[</span><span class="dv">1180</span><span class="ot">,</span> <span class="dv">1195</span><span class="ot">]</span><span class="fu">}}</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</details>
+<details>
+<summary>
+A SQL dump
+</summary>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode sql code-with-copy"><code class="sourceCode sql"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="kw">CREATE</span> <span class="kw">TABLE</span> prices (<span class="dt">date</span> TEXT, region TEXT, price_per_sqm <span class="dt">REAL</span>);</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="kw">INSERT</span> <span class="kw">INTO</span> prices <span class="kw">VALUES</span> (<span class="st">'2024-01-01'</span>, <span class="st">'Samarkand'</span>, <span class="dv">640</span>);</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+Run with <code>--data dump.sql</code>. MySQL and PostgreSQL dumps are cleaned up before replay.
+</details>
+<p>Russian and Uzbek column names are recognised directly — <code>narx</code>, <code>viloyat</code>, <code>sana</code>, <code>цена</code>, <code>область</code>, <code>дата</code>, <code>ипотека</code>, <code>ставка</code> and many others.</p>
+<section id="command-line" class="level3">
+<h3 class="anchored" data-anchor-id="command-line">Command line</h3>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> run.py <span class="at">--data</span> FILE            <span class="co"># JSON, SQL, SQLite, CSV, Excel</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> run.py <span class="at">--db</span> URL <span class="at">--query</span> SQL   <span class="co"># any SQLAlchemy database</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> run.py <span class="at">--data</span> FILE <span class="at">--no-web</span>   <span class="co"># skip web research (offline, fully reproducible)</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> run.py <span class="at">--data</span> FILE <span class="at">--lang</span> ru  <span class="co"># report in Russian (en | ru | uz)</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> run.py <span class="at">--data</span> FILE <span class="at">--title</span> <span class="st">"Tashkent Primary Market Review"</span></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> run.py <span class="at">--data</span> FILE <span class="at">--model</span> claude-opus-5</span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> run.py <span class="at">--make-sample</span>          <span class="co"># write a demo dataset and exit</span></span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> run.py <span class="at">--help</span>                 <span class="co"># everything else</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<hr>
+</section>
+</section>
+<section id="does-it-need-an-api-key" class="level2">
+<h2 class="anchored" data-anchor-id="does-it-need-an-api-key">Does it need an API key?</h2>
+<p><strong>No.</strong> The pipeline runs end to end without one and still produces a complete report with every chart, every table and every computed statistic. What you lose is the written analysis: the narrative comes from a deterministic template instead, and web sources are presented as an organised, ranked evidence digest rather than a synthesis.</p>
+<p>With <code>ANTHROPIC_API_KEY</code> set, Claude additionally:</p>
+<ul>
+<li>reviews and corrects the inferred column mapping,</li>
+<li>reads the retrieved pages and writes a cited policy and macro synthesis,</li>
+<li>builds a dated policy timeline with expected transmission channels,</li>
+<li>writes all thirteen report sections, including the reasoning behind each trend and the recommendations.</li>
+</ul>
+<p>The report always states which mode produced it, in section 2.</p>
+<hr>
+</section>
+<section id="keeping-the-policy-knowledge-current" class="level2">
+<h2 class="anchored" data-anchor-id="keeping-the-policy-knowledge-current">Keeping the policy knowledge current</h2>
+<p><code>knowledge/policy_events.json</code> is a plain, editable record of measures affecting the market. The agent merges it with what it finds on the web and labels each entry by confidence. Add your own entries — the file documents its own schema, and every field is explained inline.</p>
+<hr>
+</section>
+<section id="layout" class="level2">
+<h2 class="anchored" data-anchor-id="layout">Layout</h2>
+<pre><code>run.py                       CLI entry point
+app.py                       Streamlit interface
+knowledge/policy_events.json editable policy record
+sample_data/generate.py      synthetic demo dataset (JSON + SQL)
+uzhousing/
+  config.py                  settings from .env
+  llm.py                     Anthropic wrapper, degrades cleanly without a key
+  pipeline.py                orchestration
+  cli.py                     argument parsing
+  ingest/
+    loader.py                JSON / SQL / SQLite / CSV / Excel / database
+    profiler.py              semantic column roles, date parsing, tidying
+  analysis/
+    metrics.py               levels, growth, CAGR, volatility
+    timeseries.py            trend, seasonality, breaks, turning points, forecast
+    regional.py              ranking, dispersion, convergence, concentration
+    drivers.py               correlation, lead/lag, regression attribution
+  research/
+    websearch.py             DuckDuckGo search + page reading, cached
+    knowledge.py             research agenda and local policy record
+    context.py               synthesis into cited findings
+  viz/
+    theme.py                 palette, matplotlib defaults, drawing helpers
+    charts.py                the chart factory
+  report/
+    narrative.py             LLM writer + deterministic fallback
+    docx_builder.py          Word primitives (tables, figures, TOC, hyperlinks)
+    composer.py              assembles the 13-section report
+tests/test_pipeline.py       end-to-end and unit tests</code></pre>
+<hr>
+</section>
+<section id="report-contents" class="level2">
+<h2 class="anchored" data-anchor-id="report-contents">Report contents</h2>
+<ol type="1">
+<li>Executive summary and key findings</li>
+<li>Data and methodology — including the inferred column roles, so the reader can check the agent’s interpretation</li>
+<li>Current state of the market</li>
+<li>Historical trends and turning points</li>
+<li>Regional and segment analysis</li>
+<li>What is driving the market</li>
+<li>Policy environment and its transmission</li>
+<li>Macroeconomic and external context</li>
+<li>Outlook</li>
+<li>Recommendations — each naming who should act, what to do, and the evidence behind it</li>
+<li>Risks</li>
+<li>Limitations and data quality</li>
+<li>Sources</li>
+</ol>
+<hr>
+</section>
+<section id="notes-on-method" class="level2">
+<h2 class="anchored" data-anchor-id="notes-on-method">Notes on method</h2>
+<ul>
+<li><strong>Correlations are computed on year-on-year growth rates</strong>, not levels. Two independently trending series correlate strongly in levels for no meaningful reason. Overlapping year-on-year windows are serially correlated, so p-values are used as a ranking device and the report says so.</li>
+<li><strong>No dual-axis charts.</strong> Two series on different scales get two stacked panels sharing a time axis, or are indexed to a common base.</li>
+<li><strong>Every figure ships with its numbers</strong>, so nothing depends on reading a colour correctly.</li>
+<li><strong>The report never claims causation</strong> from a correlation, and labels every attribution as statistical evidence, documented policy, or judgement.</li>
+<li><strong>Charts use a colour-vision-deficiency-validated palette</strong> in fixed slot order.</li>
+</ul>
+</section>
+<section id="testing" class="level2">
+<h2 class="anchored" data-anchor-id="testing">Testing</h2>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> pytest tests/ <span class="at">-v</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</section>
+<section id="licence" class="level2">
+<h2 class="anchored" data-anchor-id="licence">Licence</h2>
+<p>MIT</p>
+</section>
+</section>
+
+</main>
+<!-- /main column -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

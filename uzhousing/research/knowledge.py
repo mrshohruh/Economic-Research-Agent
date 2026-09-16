@@ -92,6 +92,21 @@ def themes(period_start: str = "", period_end: str = "", regions: list[str] | No
             ],
         ),
         Theme(
+            key="rental",
+            title="Rental market and seasonal demand",
+            purpose=(
+                "Explain the rental side on its own calendar: term times, seasonal labour "
+                "migration and tourism move rents when sale prices do not."
+            ),
+            queries=[
+                f"Tashkent apartment rent prices {recent} rental market analysis",
+                f"аренда квартир Ташкент {recent} цены рынок аренды",
+                f"Uzbekistan universities student enrolment {recent} Tashkent student housing demand",
+                f"Uzbekistan tourism arrivals {recent} short-term rental Airbnb Tashkent Samarkand",
+                f"Uzbekistan labour migration Russia return {recent} housing demand",
+            ],
+        ),
+        Theme(
             key="supply",
             title="Construction supply, costs and materials",
             purpose="Explain the cost side: materials, energy tariffs, developer capacity.",

@@ -15,6 +15,18 @@ from typing import Any
 
 LOGGER = logging.getLogger(__name__)
 
+# The current models support a 128k output ceiling, but every token of it is
+# streamed and billed, so the pipeline caps itself well below that.
+MAX_OUTPUT_TOKENS = 64_000
+
+# Adaptive thinking is on by default on the current model generation and its
+# tokens count against ``max_tokens``. A budget sized for the JSON alone is
+# therefore spent on the reasoning, and the object is cut off before it closes —
+# which surfaces as "model did not return parseable JSON" and silently drops the
+# pipeline back to its deterministic fallbacks. Every structured call gets
+# headroom for the thinking that precedes the answer.
+JSON_MIN_TOKENS = 8_000
+
 
 class LLMUnavailable(RuntimeError):
     """Raised when no LLM answer could be obtained."""
@@ -57,7 +69,24 @@ class LLM:
         max_tokens: int = 2000,
         retries: int = 2,
     ) -> str:
-        """Return plain text from the model, or raise :class:`LLMUnavailable`.
+        """Return plain text from the model, or raise :class:`LLMUnavailable`."""
+        return self.complete_with_reason(prompt, system, max_tokens, retries)[0]
+
+    def complete_with_reason(
+        self,
+        prompt: str,
+        system: str = "",
+        max_tokens: int = 2000,
+        retries: int = 2,
+    ) -> tuple[str, str]:
+        """Text plus the reason generation stopped.
+
+        The stop reason matters: ``max_tokens`` means the answer was cut off
+        mid-sentence rather than finished, which a caller parsing structured
+        output needs to tell apart from a model that simply answered badly.
+
+        Requests are streamed. The output ceilings here are large enough that a
+        single non-streaming request can exceed the SDK's HTTP timeout.
 
         Sampling parameters are deliberately not sent. ``temperature``, ``top_p``
         and ``top_k`` were removed from the Messages API for the current model
@@ -72,18 +101,26 @@ class LLM:
             try:
                 kwargs: dict[str, Any] = {
                     "model": self.model,
-                    "max_tokens": max_tokens,
+                    "max_tokens": min(max_tokens, MAX_OUTPUT_TOKENS),
                     "messages": [{"role": "user", "content": prompt}],
                 }
                 if system:
                     kwargs["system"] = system
-                response = self._client.messages.create(**kwargs)
+                with self._client.messages.stream(**kwargs) as stream:
+                    message = stream.get_final_message()
+                # Thinking blocks are returned with their text omitted by
+                # default, so only the answer blocks are collected here.
                 text = "".join(
-                    block.text for block in response.content if getattr(block, "type", "") == "text"
+                    block.text for block in message.content if getattr(block, "type", "") == "text"
                 )
+                stop_reason = str(getattr(message, "stop_reason", "") or "")
                 if text.strip():
-                    return text.strip()
-                last_exc = RuntimeError("empty response")
+                    return text.strip(), stop_reason
+                last_exc = RuntimeError(
+                    "empty response"
+                    + (" (the token budget was spent before the answer began)"
+                       if stop_reason == "max_tokens" else "")
+                )
             except Exception as exc:  # pragma: no cover - network dependent
                 last_exc = exc
                 LOGGER.warning("LLM call failed (attempt %s): %s", attempt + 1, exc)
@@ -98,16 +135,35 @@ class LLM:
         system: str = "",
         max_tokens: int = 3000,
     ) -> Any:
-        """Ask for JSON and parse it, tolerating fenced or chatty output."""
+        """Ask for JSON and parse it, tolerating fenced or chatty output.
+
+        A truncated answer is retried once with a larger budget rather than
+        reported as unparseable: an object that was cut off before its closing
+        brace is a budget problem, not a model that cannot follow instructions.
+        """
         guarded = (
             prompt
             + "\n\nRespond with valid JSON only. No prose, no markdown fences, no commentary."
         )
-        raw = self.complete(guarded, system=system, max_tokens=max_tokens)
-        parsed = extract_json(raw)
-        if parsed is None:
-            raise LLMUnavailable("model did not return parseable JSON")
-        return parsed
+        budget = min(max(max_tokens, JSON_MIN_TOKENS), MAX_OUTPUT_TOKENS)
+
+        while True:
+            raw, stop_reason = self.complete_with_reason(
+                guarded, system=system, max_tokens=budget
+            )
+            parsed = extract_json(raw)
+            if parsed is not None:
+                return parsed
+            if stop_reason != "max_tokens" or budget >= MAX_OUTPUT_TOKENS:
+                raise LLMUnavailable(
+                    "model did not return parseable JSON"
+                    + (" (answer truncated at the output ceiling)"
+                       if stop_reason == "max_tokens" else "")
+                )
+            previous, budget = budget, min(budget * 4, MAX_OUTPUT_TOKENS)
+            LOGGER.warning(
+                "JSON answer was truncated at %s tokens; retrying with %s", previous, budget
+            )
 
 
 def extract_json(text: str) -> Any | None:

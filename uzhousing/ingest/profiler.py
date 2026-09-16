@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from ..llm import LLM, LLMUnavailable
+from . import translate
 from .loader import Dataset
 
 LOGGER = logging.getLogger(__name__)
@@ -232,6 +233,11 @@ def understand(dataset: Dataset, llm: LLM | None = None) -> Understanding:
             LOGGER.warning("LLM schema review failed: %s", exc)
             notes.append(f"LLM schema review failed: {exc}")
 
+    # Region, segment and other category values may be recorded in Russian or
+    # Uzbek; the report is written in English, so they are translated here,
+    # before anything downstream (charts, tables, the cross-section) reads them.
+    _translate_categorical_columns(dataset, profiles, llm)
+
     primary = max(profiles, key=lambda n: profiles[n].score)
     tidy = to_tidy(dataset.tables[primary], profiles[primary])
 
@@ -244,10 +250,114 @@ def understand(dataset: Dataset, llm: LLM | None = None) -> Understanding:
             f"merged supporting metrics from {extra['source_table'].nunique()} additional table(s)"
         )
 
+    # This agent reports only at quarterly or annual resolution. Listing
+    # microdata is handled separately (pipeline._condense_listing_dates), since
+    # its daily advert dates need dropping thin periods, not plain averaging.
+    if not tidy.empty and not dataset.listing_type:
+        raw_grain = profiles[primary].grain
+        tidy, new_grain = _aggregate_to_target_grain(
+            tidy, lambda m: _role_of_metric(profiles, primary, m), raw_grain
+        )
+        if new_grain != raw_grain:
+            notes.append(
+                f"Observations were aggregated from {raw_grain} to {new_grain} frequency, "
+                "since this agent reports only at quarterly or annual resolution."
+            )
+            profiles[primary].grain = new_grain
+            if not tidy.empty:
+                profiles[primary].period_start = tidy["date"].min()
+                profiles[primary].period_end = tidy["date"].max()
+
     if tidy.empty:
         notes.append("no usable time series was found; analysis will be cross-sectional only")
 
     return Understanding(dataset, profiles, primary, tidy, notes, llm_reviewed)
+
+
+# ---------------------------------------------------------------------------
+# Translating Russian/Uzbek category values into English
+# ---------------------------------------------------------------------------
+def _translate_categorical_columns(
+    dataset: Dataset, profiles: dict[str, TableProfile], llm: LLM | None
+) -> None:
+    """Translate the values of region/segment/category columns in place."""
+    for name, profile in profiles.items():
+        frame = dataset.tables.get(name)
+        if frame is None:
+            continue
+        for col in profile.columns:
+            if col.role not in {"region", "segment", "category"} or col.name not in frame.columns:
+                continue
+            series = frame[col.name]
+            if not (pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)):
+                continue
+            uniques = series.dropna().astype(str).unique().tolist()
+            if not uniques:
+                continue
+            mapping = translate.translate_labels(uniques, llm)
+            changed = {k: v for k, v in mapping.items() if v != k}
+            if changed:
+                frame[col.name] = series.map(lambda v: changed.get(str(v), v) if pd.notna(v) else v)
+                # The profile's sample values were captured before translation;
+                # refresh them so the glossary quotes what the report actually shows.
+                col.samples = [_jsonable(v) for v in safe_unique(frame[col.name])]
+
+
+# ---------------------------------------------------------------------------
+# Forcing quarterly/annual analysis resolution
+# ---------------------------------------------------------------------------
+# Grains finer than this get aggregated up before any analysis runs — the
+# report only ever presents quarterly or annual results, never daily, weekly
+# or monthly ones.
+_GRAIN_TARGET: dict[str, str] = {
+    "daily": "quarterly",
+    "weekly": "quarterly",
+    "monthly": "quarterly",
+    "semi-annual": "annual",
+}
+
+
+def _role_of_metric(profiles: dict[str, TableProfile], primary: str, metric: str) -> str:
+    col = profiles[primary].column(metric)
+    if col:
+        return col.role
+    for prof in profiles.values():
+        col = prof.column(metric)
+        if col:
+            return col.role
+    return "value"
+
+
+def _aggregate_to_target_grain(
+    tidy: pd.DataFrame, role_of, source_grain: str
+) -> tuple[pd.DataFrame, str]:
+    """Collapse a tidy frame finer than quarterly up to quarterly or annual."""
+    target = _GRAIN_TARGET.get(source_grain)
+    if target is None or tidy.empty:
+        return tidy, source_grain
+
+    freq = PANDAS_FREQ[target]
+    work = tidy.copy()
+    work["date"] = pd.to_datetime(work["date"])
+
+    frames = []
+    for metric, group in work.groupby("metric"):
+        method = "sum" if role_of(metric) in {"volume", "supply", "population"} else "mean"
+        collapsed = (
+            group.set_index("date")
+            .groupby(["region", "segment"])["value"]
+            .resample(freq)
+            .agg(method)
+            .reset_index()
+        )
+        collapsed["metric"] = metric
+        collapsed["source_table"] = group["source_table"].iloc[0]
+        frames.append(collapsed)
+
+    if not frames:
+        return tidy, source_grain
+    out = pd.concat(frames, ignore_index=True).dropna(subset=["value"])
+    return out[["date", "region", "segment", "metric", "value", "source_table"]], target
 
 
 # ---------------------------------------------------------------------------
@@ -630,8 +740,11 @@ def _merge_supporting_tables(
 # Optional LLM review of the mapping
 # ---------------------------------------------------------------------------
 SCHEMA_SYSTEM = (
-    "You are a data engineer specialising in housing-market and macroeconomic statistics "
-    "for Uzbekistan and Central Asia. You map raw columns to semantic roles precisely."
+    "You are a data engineer specialising in housing, rental and macroeconomic statistics "
+    "for Uzbekistan and Central Asia. You map raw columns to semantic roles precisely, and you "
+    "discover the structure of a file by inspecting it rather than assuming a fixed schema. "
+    "Column names arrive in English, Russian and Uzbek, and a name alone is never enough: you "
+    "check it against the sample values before committing to a role."
 )
 
 

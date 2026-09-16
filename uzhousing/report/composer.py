@@ -466,20 +466,27 @@ def _data_section(doc: ReportDocument, analysis: Any, research: Any, settings: A
     )
     doc.table(overview, title="Tables found in the source", include_index=False)
 
+    glossary_by_name = {g.get("name"): g for g in (analysis.brief.get("glossary") or [])}
     roles = pd.DataFrame(
         [
             {
                 "Column": c.name,
+                "Label": glossary_by_name.get(c.name, {}).get("label", c.name),
                 "Detected role": c.role,
                 "Unit": c.unit or "—",
                 "Missing %": c.missing_pct,
                 "Distinct": c.unique,
-                "How it was identified": c.reason,
+                "What it measures": glossary_by_name.get(c.name, {}).get("description", c.reason),
             }
             for c in profile.columns
         ]
     )
-    doc.table(roles, title=f"Column roles inferred for “{profile.name}”", include_index=False, max_rows=28)
+    doc.table(
+        roles, title=f"Column roles and what they measure, for “{profile.name}”", include_index=False, max_rows=28,
+        note="Column names in Russian or Uzbek are translated in “Label”. Where two columns share a name "
+             "pattern (e.g. two price columns), “What it measures” states how their values actually relate "
+             "to each other in this dataset, not just what the names suggest.",
+    )
 
     doc.heading("Method", 2)
     method_steps = [
@@ -489,6 +496,11 @@ def _data_section(doc: ReportDocument, analysis: Any, research: Any, settings: A
         "transaction volume, mortgage, rate, income and so on — from multilingual name patterns and "
         "value checks"
         + (", then reviewed and corrected by the language model." if understanding.llm_reviewed else "."),
+        "Translation: column and category values recorded in Russian or Uzbek are translated to "
+        "English, and what each column measures is documented in the glossary below — for columns "
+        "that share a name pattern, from how their values actually relate to each other in the data.",
+        "Resolution: observations finer than quarterly (daily, weekly or monthly) are aggregated up "
+        "before any analysis runs, since this report presents only quarterly or annual results.",
         "Statistics: levels, period and year-on-year growth, CAGR, volatility and drawdown from peak; "
         "a linear trend test; STL seasonal decomposition; binary-segmentation break detection; "
         "turning points; and a Holt-Winters projection.",

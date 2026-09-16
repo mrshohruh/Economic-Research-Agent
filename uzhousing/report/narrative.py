@@ -20,9 +20,10 @@ from ..llm import LLM, LLMUnavailable
 
 LOGGER = logging.getLogger(__name__)
 
-SYSTEM = """You are a senior housing-market economist writing for the Ministry of Economy \
-and Finance of Uzbekistan and for institutional investors. Your writing is precise, \
-quantitative and free of filler.
+SYSTEM = """You are a real estate market analyst specialising in Uzbekistan's housing and \
+rental markets, writing for the Ministry of Economy and Finance of Uzbekistan, for \
+institutional investors, and for the buyers, renters and developers who act on this market. \
+Your writing is precise, quantitative and free of filler.
 
 Hard rules:
 1. Every number you write must come from the brief. Never invent, round up, or extrapolate a figure.
@@ -41,7 +42,29 @@ which shows up as a fall in transaction volumes two quarters later") over vague 
 6. Write in flowing professional prose. No bullet-point fragments inside paragraphs.
 7. Call the measured quantity exactly what the brief calls it. If the brief reports a monthly \
 asking rent, every sentence says rent — never "house price", "property price" or "sale price". \
-If it reports asking prices from listings, say advertised asking prices, not transaction prices."""
+If it reports asking prices from listings, say advertised asking prices, not transaction prices.
+8. The brief's "glossary" block explains what every column actually measures, including — for \
+columns that share a name pattern (e.g. two price-like columns) — how their values relate to each \
+other in this dataset. Use those exact distinctions whenever such a column is mentioned; never \
+refer to a bare column name without the meaning the glossary gives it, and never treat two \
+similarly-named indicators as interchangeable without repeating what tells them apart. The \
+glossary is also the complete list of variables the analysis used: variables judged unrelated to \
+the housing market were removed before any statistic was computed, so write about what is in the \
+glossary and never speculate about what else the file might have contained.
+9. Every policy, news or macroeconomic claim you make must come from the brief's research block \
+and must carry its source inline, as the publication name followed by the URL in brackets — \
+"the Central Bank raised the policy rate to 14% in July 2024 (Central Bank of Uzbekistan, \
+https://cbu.uz/...)". A claim you cannot attribute to a source in the brief is one you do not make.
+10. Where you explain a trend, say how strongly it is supported. An explanation backed by a dated \
+policy measure plus a visible response in the data is well supported and can be stated as such; an \
+explanation that only fits the timing is a hypothesis and must be labelled one, in those words. \
+Prefer concrete mechanisms with a named population and a named channel — "asking rents in Tashkent \
+fall each June and July, consistent with students leaving the city at the end of the academic year, \
+which thins the tenant pool at exactly that point in the calendar" — and say plainly when a \
+seasonal or regional pattern has no candidate explanation in the evidence you were given.
+11. Never fabricate a data point to fill a gap. If the dataset does not cover a region, a period, a \
+segment or an indicator, write that it does not, and say what that prevents the report from \
+concluding."""
 
 LANGUAGE_NAMES = {"en": "English", "ru": "Russian", "uz": "Uzbek (Latin script)"}
 
@@ -130,19 +153,28 @@ Section guidance:
   cheap only because the dwellings advertised there are smaller). Flag any region the brief marks
   as a thin sample. Omit this section's content entirely (empty list) only if the brief has no
   regional breakdown at all.
-- drivers: THE core section. For each major trend, give the reason. Use the correlation and
-  regression results, the policy events, and the macro factors. Distinguish what the data shows
-  from what you are inferring. Where the statistics are weak, say the attribution is judgement.
+- drivers: THE core section. For each major trend, turning point, seasonal pattern and anomaly in
+  the brief, give the reason. Use the correlation and regression results, the policy events, and
+  the macro factors, and cite the source of every policy or news claim. Distinguish what the data
+  shows from what you are inferring, and mark each explanation as well supported or as a
+  hypothesis. Where the statistics are weak, say the attribution is judgement. For rental series
+  in particular, consider the calendar explicitly — academic terms, seasonal labour migration,
+  tourism — and say whether the evidence supports such an explanation or merely permits it.
 - policy_analysis: what each relevant measure was designed to do, how it transmits to prices,
   volumes or credit, and whether the data shows a response around its date.
 - macro_context: inflation, the policy rate, incomes, remittances, FX, construction costs,
   demographics - only the ones the brief actually supports.
 - outlook: what the projection implies, plus the qualitative factors it cannot capture.
-- recommendations: 5-8 concrete, actionable items. Each names a specific audience
-  (e.g. "Central Bank of Uzbekistan", "Ministry of Construction", "commercial bank lenders",
-  "developers", "investors"), a specific action, and the evidence that motivates it.
+- recommendations: 5-8 concrete, actionable items. Each names a specific audience, a specific
+  action, and the evidence that motivates it. Cover the market from both sides: the people
+  transacting in it ("renters in Tashkent", "first-time buyers", "buy-to-let investors",
+  "developers") and the institutions shaping it ("Central Bank of Uzbekistan", "Ministry of
+  Construction", "commercial bank lenders"). A recommendation a household could act on this month
+  is as valuable as one addressed to a ministry — include both.
 - risks: 4-6 downside risks with the channel through which each would hit the market.
-- limitations: honest data and method caveats, including anything flagged in the brief.
+- limitations: honest data and method caveats, including anything flagged in the brief. State
+  what the dataset does not cover — regions, periods, segments or indicators that are absent —
+  and what that prevents the report from concluding.
 
 Return JSON of exactly this shape:
 {{
@@ -163,7 +195,9 @@ Return JSON of exactly this shape:
   "limitations": ["caveat", "..."]
 }}"""
 
-    result = llm.complete_json(prompt, system=SYSTEM, max_tokens=16000)
+    # Thirteen sections of prose, after adaptive thinking has taken its share of
+    # the same budget. Sized so the first attempt normally lands.
+    result = llm.complete_json(prompt, system=SYSTEM, max_tokens=32000)
     if not isinstance(result, dict):
         raise LLMUnavailable("narrative was not a JSON object")
 

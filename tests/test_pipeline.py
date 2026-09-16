@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -21,7 +22,8 @@ from uzhousing import pipeline  # noqa: E402
 from uzhousing.analysis import drivers as drivers_mod  # noqa: E402
 from uzhousing.analysis import metrics, regional, timeseries  # noqa: E402
 from uzhousing.config import Settings  # noqa: E402
-from uzhousing.ingest import loader, profiler  # noqa: E402
+from uzhousing.ingest import loader, profiler, relevance  # noqa: E402
+from uzhousing import llm as llm_mod  # noqa: E402
 from uzhousing.llm import extract_json  # noqa: E402
 from uzhousing.report import narrative as narrative_mod  # noqa: E402
 
@@ -325,7 +327,9 @@ class TestProfiler:
 
     def test_grain_and_period(self, understanding):
         profile = understanding.primary_profile
-        assert profile.grain == "monthly"
+        # The source data is monthly; the agent reports only at quarterly or
+        # annual resolution, so it is aggregated up before analysis runs.
+        assert profile.grain == "quarterly"
         assert profile.period_start.year == 2018
 
     def test_supporting_table_metrics_are_merged(self, understanding):
@@ -569,6 +573,128 @@ class TestAnalysisResult:
         assert roles.index("area") > roles.index("volume")
 
 
+class TestRelevanceScreen:
+    """Variables are understood first, then screened; the unrelated ones never
+    reach a statistic."""
+
+    @staticmethod
+    def _understanding() -> profiler.Understanding:
+        """A housing panel carrying the junk a scraped marketplace feed brings with it."""
+        rows = 36
+        frame = pd.DataFrame({
+            "date": pd.date_range("2022-01-01", periods=rows, freq="MS"),
+            "region": ["Tashkent City"] * rows,
+            # Genuine housing and macro measures.
+            "avg_price_per_sqm_usd": np.linspace(900, 1300, rows),
+            "monthly_rent_usd": np.linspace(220, 340, rows),
+            "transactions": np.linspace(400, 700, rows).round(),
+            "mortgage_rate_pct": np.linspace(19, 15, rows),
+            "floor_area_sqm": np.linspace(58, 62, rows),
+            # Marketplace and record-keeping noise.
+            "listing_id": np.arange(1, rows + 1),
+            "advert_views": np.linspace(50, 5000, rows),
+            "photo_count": np.linspace(3, 9, rows).round(),
+            "seller_rating": np.linspace(3.5, 4.9, rows),
+            "latitude": np.linspace(41.2, 41.4, rows),
+            "is_promoted": [0, 1] * (rows // 2),
+            "scraped_page_no": np.arange(1, rows + 1),
+            "source_version": [3] * rows,
+        })
+        dataset = loader.Dataset(tables={"market": frame}, source="synthetic", kind="test")
+        return profiler.understand(dataset, None)
+
+    def test_marketplace_noise_is_excluded(self):
+        understanding = self._understanding()
+        screen = relevance.screen(understanding)
+        assert screen.applied
+        for junk in (
+            "advert_views", "photo_count", "seller_rating",
+            "latitude", "is_promoted", "scraped_page_no", "source_version",
+        ):
+            assert junk in screen.dropped, f"{junk} should have been screened out"
+        # The profiler already labels a key as an identifier, so it is never a
+        # candidate the screen has to reject.
+        assert "listing_id" not in understanding.metrics
+
+    def test_a_core_role_does_not_shield_an_obvious_exclusion(self):
+        """"photo_count" reads as a count, but counting photographs is not market activity."""
+        understanding = self._understanding()
+        assert understanding.primary_profile.role_of("photo_count") == "volume"
+        screen = relevance.screen(understanding)
+        assert "photo_count" in screen.dropped
+
+    def test_housing_measures_survive(self):
+        understanding = self._understanding()
+        screen = relevance.screen(understanding)
+        for kept in (
+            "avg_price_per_sqm_usd", "monthly_rent_usd", "transactions",
+            "mortgage_rate_pct", "floor_area_sqm",
+        ):
+            assert kept in screen.kept, f"{kept} should have survived the screen"
+
+    def test_excluded_variables_leave_the_analysis_frame(self):
+        understanding = self._understanding()
+        screen = relevance.screen(understanding)
+        assert "advert_views" not in understanding.metrics
+        assert "advert_views" not in understanding.primary_profile.metric_cols
+        assert "avg_price_per_sqm_usd" in understanding.metrics
+        assert screen.dropped  # the assertions above are not vacuous
+
+    def test_glossary_loses_the_excluded_entries(self):
+        understanding = self._understanding()
+        glossary = [
+            {"name": name, "description": "..."}
+            for name in ["avg_price_per_sqm_usd", "advert_views", "seller_rating"]
+        ]
+        relevance.screen(understanding, glossary)
+        assert [entry["name"] for entry in glossary] == ["avg_price_per_sqm_usd"]
+
+    def test_every_decision_carries_a_reason(self):
+        understanding = self._understanding()
+        screen = relevance.screen(understanding)
+        for decision in screen.decisions:
+            assert decision.reason
+            assert decision.label
+            assert decision.source in {"heuristic", "data quality", "model review"}
+
+    def test_a_constant_column_cannot_explain_variation(self):
+        col = profiler.ColumnProfile(
+            name="price_usd", dtype="float64", role="price",
+            non_null=100, missing_pct=0.0, unique=1,
+        )
+        keep, reason, source = relevance._verdict("price_usd", "price", col)
+        assert keep is False
+        assert source == "data quality"
+        assert "constant" in reason
+
+    def test_screen_is_abandoned_rather_than_emptying_the_dataset(self):
+        """Dropping everything is a screening failure, not a finding about the data."""
+        rows = 24
+        frame = pd.DataFrame({
+            "date": pd.date_range("2023-01-01", periods=rows, freq="MS"),
+            "advert_views": np.linspace(10, 900, rows),
+            "photo_count": np.linspace(1, 9, rows).round(),
+        })
+        dataset = loader.Dataset(tables={"junk": frame}, source="synthetic", kind="test")
+        understanding = profiler.understand(dataset, None)
+        screen = relevance.screen(understanding)
+        assert not screen.applied
+        assert screen.abandoned_reason
+        assert not screen.dropped
+
+    def test_the_pipeline_records_the_screen(self, analysis):
+        assert analysis.relevance is not None
+        assert analysis.relevance.kept
+        json.dumps(analysis.relevance.to_dict(), default=str)
+
+    def test_the_screen_stays_out_of_the_report(self, analysis):
+        """Decisions are logged for the operator, not narrated to the reader."""
+        assert "relevance" not in analysis.brief
+        assert "variable_screen" not in analysis.brief
+        rendered = json.dumps(analysis.brief, default=str)
+        assert "screened out" not in rendered
+
+
 class TestNarrative:
     def test_fallback_fills_every_section(self, analysis):
         result = narrative_mod.write_fallback(analysis.brief)
@@ -670,6 +796,82 @@ class TestLLMHelpers:
     )
     def test_json_extraction(self, raw, expected):
         assert extract_json(raw) == expected
+
+
+class _FakeStream:
+    """Stands in for the SDK's streaming context manager."""
+
+    def __init__(self, text: str, stop_reason: str) -> None:
+        self._message = SimpleNamespace(
+            content=[SimpleNamespace(type="text", text=text)],
+            stop_reason=stop_reason,
+        )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def get_final_message(self):
+        return self._message
+
+
+class _FakeClient:
+    """Replays canned (text, stop_reason) pairs and records the budget asked for."""
+
+    def __init__(self, replies: list[tuple[str, str]]) -> None:
+        self.replies = list(replies)
+        self.budgets: list[int] = []
+        self.messages = self
+
+    def stream(self, **kwargs):
+        self.budgets.append(kwargs["max_tokens"])
+        return _FakeStream(*self.replies.pop(0))
+
+
+def _llm_with(replies: list[tuple[str, str]]) -> tuple[llm_mod.LLM, _FakeClient]:
+    client = _FakeClient(replies)
+    llm = llm_mod.LLM(api_key="", model="stub-model")
+    llm._client = client
+    return llm, client
+
+
+class TestTokenBudget:
+    """Adaptive thinking spends the same budget as the answer, so a JSON reply
+    can be cut off before its closing brace. That is a budget failure, not a
+    model that cannot follow instructions."""
+
+    def test_truncated_json_is_retried_with_a_larger_budget(self):
+        llm, client = _llm_with([
+            ('{"executive_summary": ["the answer stops mid-sen', "max_tokens"),
+            ('{"executive_summary": ["done"]}', "end_turn"),
+        ])
+        assert llm.complete_json("write the report") == {"executive_summary": ["done"]}
+        assert client.budgets[1] > client.budgets[0]
+
+    def test_a_small_budget_is_raised_to_make_room_for_thinking(self):
+        llm, client = _llm_with([('{"ok": true}', "end_turn")])
+        llm.complete_json("classify this", max_tokens=500)
+        assert client.budgets[0] >= llm_mod.JSON_MIN_TOKENS
+
+    def test_budgets_never_exceed_the_ceiling(self):
+        llm, client = _llm_with([("{", "max_tokens")] * 6)
+        with pytest.raises(llm_mod.LLMUnavailable):
+            llm.complete_json("write the report", max_tokens=llm_mod.MAX_OUTPUT_TOKENS)
+        assert client.budgets == [llm_mod.MAX_OUTPUT_TOKENS]
+
+    def test_a_complete_but_unparseable_answer_is_not_retried(self):
+        """Retrying costs a whole second generation; only truncation earns one."""
+        llm, client = _llm_with([("I would rather explain it in prose.", "end_turn")])
+        with pytest.raises(llm_mod.LLMUnavailable):
+            llm.complete_json("write the report")
+        assert len(client.budgets) == 1
+
+    def test_the_stop_reason_reaches_the_caller(self):
+        llm, _ = _llm_with([("partial", "max_tokens")])
+        text, stop_reason = llm.complete_with_reason("hello")
+        assert (text, stop_reason) == ("partial", "max_tokens")
 
 
 class StubLLM:

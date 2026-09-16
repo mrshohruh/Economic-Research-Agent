@@ -1,9 +1,12 @@
 # Uzbekistan Housing Market Research Agent
 
-Give it housing data as **JSON or SQL** (CSV, Excel and live databases work too). It reads the
-data, works out what every column means, computes the statistics, researches the policy and
-macroeconomic backdrop on the web, and writes a **formatted Word report** with figures, tables,
-explanations of the trends, and recommendations.
+Give it housing or rental data as a **`.db` SQLite file, JSON or SQL** (CSV, Excel, Parquet, a
+whole folder and live databases work too). It reads the data, works out what every variable means,
+sets aside the ones that have nothing to do with the housing market, computes the statistics,
+researches the policy and macroeconomic backdrop on the web, and writes a **formatted Word report**
+with figures, tables, explanations of the trends, and recommendations.
+
+What it is and the rules it works under are specified in [AGENT.md](AGENT.md).
 
 ```
 python run.py --data sample_data/uz_housing_sample.json
@@ -16,11 +19,12 @@ python run.py --data sample_data/uz_housing_sample.json
 | Stage | What happens |
 |---|---|
 | **1. Ingest** | Parses JSON (nested, column-oriented, multi-table), `.sql` dumps (replayed into SQLite, with MySQL/Postgres syntax cleaned up), SQLite files, CSV, Excel, or a live SQLAlchemy database. Normalises column names and coerces text like `"1 234,5"` and `"12%"` into numbers. Recognises **property-marketplace listing feeds** (OLX-style pages of adverts with their attributes in a `params` array) and lifts them into one row per listing — price, currency, region, city, floor area, rooms — converting som and dollar-linked "у.е." onto a single currency and detecting whether the feed is rentals or sales. |
-| **2. Understand** | Assigns a semantic role to every column — date, region, segment, price, price per m², transaction volume, supply, mortgage, rate, income, inflation, FX — using name patterns in **English, Russian and Uzbek** plus value checks. With an API key, Claude reviews and corrects the mapping. Picks the most informative table and reshapes it into a tidy panel, merging metrics from supporting tables. |
-| **3. Analyse** | **Cross-section** (property microdata): median and mean price by region and city, price per m², price by dwelling size and state of repair, percentiles and skew, which region is most expensive and by what ratio, with thin samples flagged rather than silently ranked. **Time series**: levels, period and year-on-year growth, YTD, CAGR, volatility, drawdown from peak; linear trend test, STL seasonal decomposition, structural-break detection, turning points, Holt-Winters projection; regional ranking, dispersion, σ-convergence and concentration. Every number in the report is computed here by pandas — the language model interprets these tables, it never produces the figures in them. |
-| **4. Explain** | Tests every other indicator against the headline series **and** against the main activity series, on year-on-year growth rates, with lead/lag scanning, then fits a multivariate OLS regression. Excludes same-family and collinear regressors so the coefficients mean something. |
-| **5. Research** | Searches the web (DuckDuckGo, no key needed) across eight themes — market state, housing policy, mortgage programmes, monetary policy, macro drivers, construction costs, risks, regional dynamics — in English, Russian and Uzbek. Downloads the best pages and, with an API key, synthesises them into cited findings and a dated policy timeline. |
-| **6. Report** | Renders up to 15 charts and writes a Word document: cover page, table of contents, 13 numbered sections, numbered figures and tables, a policy table, a recommendations table, sources with working hyperlinks, and page numbers. |
+| **2. Understand** | Assigns a semantic role to every column — date, region, segment, price, price per m², transaction volume, supply, mortgage, rate, income, inflation, FX — using name patterns in **English, Russian and Uzbek** plus value checks. With an API key, Claude reviews and corrects the mapping. Picks the most informative table and reshapes it into a tidy panel, merging metrics from supporting tables. Then writes a **glossary**: what each column actually measures, and — where two columns share a name stem — how their values relate to each other in this dataset. |
+| **3. Screen** | Decides which of those variables belong in a housing analysis at all, and **drops the ones that do not** before a single statistic is computed. A scraped marketplace feed carries advert view counts, seller ratings, photo counts, promotion flags, map coordinates and record keys alongside the price; left in, they become candidate drivers and eventually a sentence about how user ratings rose alongside prices. Prices, rents, areas, transaction counts, completions, credit, rates, incomes, inflation, FX and population stay. Empty, constant and per-row-identifier columns go too. The screen is conservative — a recognised housing indicator survives anything short of an unambiguous match, and if everything would be dropped the screen is abandoned instead. Decisions are logged to the console and the run log, never to the report. |
+| **4. Analyse** | **Cross-section** (property microdata): median and mean price by region and city, price per m², price by dwelling size and state of repair, percentiles and skew, which region is most expensive and by what ratio, with thin samples flagged rather than silently ranked. **Time series**: levels, period and year-on-year growth, YTD, CAGR, volatility, drawdown from peak; linear trend test, STL seasonal decomposition, structural-break detection, turning points, Holt-Winters projection; regional ranking, dispersion, σ-convergence and concentration. Every number in the report is computed here by pandas — the language model interprets these tables, it never produces the figures in them. |
+| **5. Explain** | Tests every other indicator against the headline series **and** against the main activity series, on year-on-year growth rates, with lead/lag scanning, then fits a multivariate OLS regression. Excludes same-family and collinear regressors so the coefficients mean something. |
+| **6. Research** | Searches the web (DuckDuckGo, no key needed) across nine themes — market state, housing policy, mortgage programmes, monetary policy, macro drivers, rental demand and its seasonality, construction costs, risks, regional dynamics — in English, Russian and Uzbek. Official government and central bank announcements outrank news outlets, which outrank brokerage blogs. Downloads the best pages and, with an API key, synthesises them into cited findings and a dated policy timeline. |
+| **7. Report** | Renders up to 15 charts and writes a Word document: cover page, table of contents, 13 numbered sections, numbered figures and tables, a policy table, a recommendations table, sources with working hyperlinks, and page numbers. |
 
 ---
 
@@ -151,6 +155,8 @@ organised, ranked evidence digest rather than a synthesis.
 With `ANTHROPIC_API_KEY` set, Claude additionally:
 
 - reviews and corrects the inferred column mapping,
+- explains in plain language what each column measures,
+- reviews which variables are relevant to the housing market and which should be set aside,
 - reads the retrieved pages and writes a cited policy and macro synthesis,
 - builds a dated policy timeline with expected transmission channels,
 - writes all thirteen report sections, including the reasoning behind each trend and the
@@ -171,6 +177,7 @@ entries — the file documents its own schema, and every field is explained inli
 ## Layout
 
 ```
+AGENT.md                     what the agent is, and the rules it works under
 run.py                       CLI entry point
 app.py                       Streamlit interface
 knowledge/policy_events.json editable policy record
@@ -183,6 +190,10 @@ uzhousing/
   ingest/
     loader.py                JSON / SQL / SQLite / CSV / Excel / database
     profiler.py              semantic column roles, date parsing, tidying
+    glossary.py              what each column actually measures
+    relevance.py             drops variables unrelated to the housing market
+    listings.py              marketplace advert feeds -> one row per listing
+    translate.py             readable labels from ru / uz / en column names
   analysis/
     metrics.py               levels, growth, CAGR, volatility
     timeseries.py            trend, seasonality, breaks, turning points, forecast
@@ -224,6 +235,14 @@ tests/test_pipeline.py       end-to-end and unit tests
 
 ## Notes on method
 
+- **Variables are understood before they are analysed, and screened before they are computed.**
+  Relevance is judged from established meaning, never from a column name alone — which is why the
+  glossary runs first and the screen second.
+- **Every policy and news claim carries its source URL inline.** A claim that cannot be attributed
+  to a retrieved source is not made.
+- **Explanations are graded, not uniformly hedged.** A dated policy measure plus a visible response
+  in the data is stated as well supported; an explanation that merely fits the timing is labelled a
+  hypothesis in those words.
 - **Correlations are computed on year-on-year growth rates**, not levels. Two independently
   trending series correlate strongly in levels for no meaningful reason. Overlapping year-on-year
   windows are serially correlated, so p-values are used as a ranking device and the report says so.

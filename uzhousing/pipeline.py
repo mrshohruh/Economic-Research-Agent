@@ -18,7 +18,10 @@ from .analysis import metrics as metrics_mod
 from .analysis import regional as regional_mod
 from .analysis import timeseries as ts_mod
 from .config import Settings
+from .ingest import glossary as glossary_mod
 from .ingest import listings, loader, profiler
+from .ingest import relevance as relevance_mod
+from .ingest import translate as ingest_translate
 from .ingest.profiler import PERIODS_PER_YEAR, Understanding
 from .llm import LLM
 from .report import composer
@@ -56,6 +59,7 @@ class AnalysisResult:
     activity_drivers: drivers_mod.DriverAnalysis | None = None
     panel: pd.DataFrame = field(default_factory=pd.DataFrame, repr=False)
     cross_section: cross_mod.CrossSection | None = None
+    relevance: relevance_mod.RelevanceScreen | None = None
     brief: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
@@ -126,8 +130,10 @@ def run(
 
     # 3. Analyse ------------------------------------------------------------
     say("Computing indicators, trends and relationships...")
-    analysis = analyse(understanding)
+    analysis = analyse(understanding, llm)
     result.analysis = analysis
+    if analysis.relevance is not None:
+        say(analysis.relevance.summary())
     if analysis.headline_metric:
         say(f"Headline indicator: {analysis.headline_label}")
 
@@ -211,9 +217,19 @@ def run(
 
 
 # ---------------------------------------------------------------------------
-def analyse(understanding: Understanding) -> AnalysisResult:
+def analyse(understanding: Understanding, llm: LLM | None = None) -> AnalysisResult:
     """All quantitative work, gathered into one result plus a JSON-ready brief."""
     result = AnalysisResult(understanding=understanding, notes=list(understanding.notes))
+
+    # What each column actually measures — grounded in its role, its values and,
+    # for ambiguously-named columns, how they relate to each other in the data.
+    glossary = glossary_mod.build_glossary(understanding, llm)
+
+    # Only then, knowing what each variable means, decide which of them belong in
+    # a housing-market analysis at all. Advert view counts, seller ratings, photo
+    # counts and record keys are removed here so that nothing downstream can
+    # correlate them against prices or write a sentence about them.
+    result.relevance = relevance_mod.screen(understanding, glossary, llm)
     tidy = understanding.tidy
 
     # Microdata first. Where each row is one property rather than an aggregated
@@ -227,6 +243,7 @@ def analyse(understanding: Understanding) -> AnalysisResult:
         result.brief = {
             "coverage": _coverage(understanding, pd.Series(dtype=float)),
             "metrics": [],
+            "glossary": glossary,
             "notes": result.notes + ["No time series could be derived, so trend analysis was skipped."],
         }
         if result.cross_section is not None:
@@ -242,7 +259,10 @@ def analyse(understanding: Understanding) -> AnalysisResult:
 
     if not series_map:
         result.notes.append("Every indicator had fewer than three usable observations.")
-        result.brief = {"coverage": _coverage(understanding, pd.Series(dtype=float)), "metrics": [], "notes": result.notes}
+        result.brief = {
+            "coverage": _coverage(understanding, pd.Series(dtype=float)),
+            "metrics": [], "glossary": glossary, "notes": result.notes,
+        }
         return result
 
     result.headline_metric = _pick_headline(understanding, series_map)
@@ -297,34 +317,35 @@ def analyse(understanding: Understanding) -> AnalysisResult:
             periods_per_year=per_year, target_label=result.activity_label, labels=labels,
         )
 
-    result.brief = _build_brief(understanding, result, series_map)
+    result.brief = _build_brief(understanding, result, series_map, glossary)
     return result
 
 
-# Months represented by fewer adverts than this cannot support a monthly average.
-MIN_LISTINGS_PER_MONTH = 50
+# Quarters represented by fewer adverts than this cannot support a reliable average.
+MIN_LISTINGS_PER_QUARTER = 120
 
 
 def _condense_listing_dates(
     understanding: Understanding, say: Callable[[str], None]
 ) -> None:
-    """Put listing microdata on a monthly footing before any trend analysis.
+    """Put listing microdata on a quarterly footing before any trend analysis.
 
     Each advert carries the day it was posted, which the profiler reads as a
     daily series. Averaging asking prices over a single day early in the sample
     means averaging two or three adverts, which produces violent swings that a
     trend line, a break detector and a forecast would all take seriously.
 
-    Collapsing to calendar months and dropping months with too few adverts
-    leaves a series whose movements are large enough to be worth interpreting.
-    The survivorship caveat still applies and is recorded separately.
+    Collapsing to calendar quarters and dropping quarters with too few adverts
+    leaves a series whose movements are large enough to be worth interpreting,
+    at the quarterly-or-annual resolution this agent reports at. The
+    survivorship caveat still applies and is recorded separately.
     """
     tidy = understanding.tidy
     if tidy.empty or "date" not in tidy.columns:
         return
 
     tidy = tidy.copy()
-    tidy["date"] = pd.to_datetime(tidy["date"], errors="coerce").dt.to_period("M").dt.to_timestamp()
+    tidy["date"] = pd.to_datetime(tidy["date"], errors="coerce").dt.to_period("Q").dt.to_timestamp()
     tidy = tidy.dropna(subset=["date"])
 
     # Keep only the columns that are economic measures. The dwelling attributes
@@ -343,31 +364,31 @@ def _condense_listing_dates(
             )
 
     # Count adverts, not melted rows: every advert contributes one row per metric.
-    per_month = tidy.groupby("date").size() / max(1, tidy["metric"].nunique())
-    keep = per_month[per_month >= MIN_LISTINGS_PER_MONTH].index
-    dropped = int(per_month.size - len(keep))
+    per_quarter = tidy.groupby("date").size() / max(1, tidy["metric"].nunique())
+    keep = per_quarter[per_quarter >= MIN_LISTINGS_PER_QUARTER].index
+    dropped = int(per_quarter.size - len(keep))
 
     if len(keep) < 3:
         understanding.tidy = pd.DataFrame(columns=tidy.columns)
         understanding.notes.append(
-            "Fewer than three months carry enough adverts to average, so no trend analysis "
+            "Fewer than three quarters carry enough adverts to average, so no trend analysis "
             "was attempted. The cross-sectional results are unaffected."
         )
-        say("Too few well-covered months for trend analysis; reporting the cross-section only.")
+        say("Too few well-covered quarters for trend analysis; reporting the cross-section only.")
         return
 
     understanding.tidy = tidy[tidy["date"].isin(keep)].reset_index(drop=True)
     profile = understanding.primary_profile
-    profile.grain = "monthly"
+    profile.grain = "quarterly"
     profile.period_start, profile.period_end = min(keep), max(keep)
 
     note = (
-        f"Adverts were grouped into calendar months for the trend analysis. "
-        f"{len(keep)} month(s) carry at least {MIN_LISTINGS_PER_MONTH} adverts and are used; "
-        f"{dropped} sparser month(s) were excluded as too thin to average."
+        f"Adverts were grouped into calendar quarters for the trend analysis. "
+        f"{len(keep)} quarter(s) carry at least {MIN_LISTINGS_PER_QUARTER} adverts and are used; "
+        f"{dropped} sparser quarter(s) were excluded as too thin to average."
     )
     understanding.notes.append(note)
-    say(f"Trend analysis uses {len(keep)} month(s) with adequate advert coverage.")
+    say(f"Trend analysis uses {len(keep)} quarter(s) with adequate advert coverage.")
 
 
 def _cross_section(understanding: Understanding) -> cross_mod.CrossSection | None:
@@ -426,6 +447,7 @@ def _build_brief(
     understanding: Understanding,
     result: AnalysisResult,
     series_map: dict[str, pd.Series],
+    glossary: list[dict[str, Any]],
 ) -> dict[str, Any]:
     headline_summary = result.summaries[result.headline_metric]
 
@@ -450,6 +472,7 @@ def _build_brief(
             for m in ordered
         ],
         "timeseries": result.timeseries.to_dict() if result.timeseries else {},
+        "glossary": glossary,
         "notes": result.notes,
     }
 
@@ -721,18 +744,7 @@ def _cross_section_figures(
 
 # ---------------------------------------------------------------------------
 def _label(metric: str) -> str:
-    text = str(metric).replace("_", " ").strip()
-    fixes = {
-        "pct": "%", "avg": "average", "med": "median", "sqm": "m²", "m2": "m²",
-        "usd": "USD", "uzs": "UZS", "gdp": "GDP", "cpi": "CPI", "yoy": "YoY", "fx": "FX",
-        "bn": "bn", "mn": "mn",
-    }
-    words = []
-    for word in text.split():
-        lowered = word.lower()
-        words.append(fixes.get(lowered, word))
-    text = " ".join(words)
-    return text[:1].upper() + text[1:] if text else str(metric)
+    return ingest_translate.humanize_label(metric)
 
 
 def _subtitle(analysis: AnalysisResult) -> str:
@@ -771,6 +783,9 @@ def _write_run_log(
         "figures": [f.to_dict() for f in result.figures],
         "warnings": result.warnings,
         "narrative_engine": narrative.generated_by,
+        # Screened-out variables are recorded here rather than in the report: the
+        # reader wants the market, the operator wants the audit trail.
+        "variable_screen": analysis.relevance.to_dict() if analysis.relevance else {},
         "brief": analysis.brief,
         "narrative": narrative.to_dict(),
     }
