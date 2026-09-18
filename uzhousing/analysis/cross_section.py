@@ -30,6 +30,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .variables import assess_variables
+
 LOGGER = logging.getLogger(__name__)
 
 # Below this many adverts a regional median is too noisy to rank on. The group
@@ -81,6 +83,7 @@ class CrossSection:
     prices: pd.Series = field(repr=False, default_factory=lambda: pd.Series(dtype=float))
     prices_per_sqm: pd.Series = field(repr=False, default_factory=lambda: pd.Series(dtype=float))
     notes: list[str] = field(default_factory=list)
+    variable_assessment: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def available(self) -> bool:
@@ -97,6 +100,7 @@ class CrossSection:
             "by_rooms": self.by_rooms.to_dict(orient="records"),
             "by_condition": self.by_condition.to_dict(orient="records"),
             "notes": self.notes,
+            "variable_assessment": self.variable_assessment,
         }
 
 
@@ -123,7 +127,7 @@ def analyse(
     )
     result.overall = _overall(frame, prices, area_col, per_sqm_col, listing_type)
     result.prices = prices.dropna()
-    result.prices_per_sqm = pd.to_numeric(frame.get(per_sqm_col), errors="coerce").dropna()
+    result.prices_per_sqm = pd.to_numeric(frame.get(per_sqm_col, pd.Series(dtype=float)), errors="coerce").dropna()
 
     if "region" in frame.columns:
         result.by_region = _group_stats(frame, "region", price_col, per_sqm_col, area_col)
@@ -134,7 +138,11 @@ def analyse(
     result.by_rooms = _by_rooms(frame, price_col, per_sqm_col, area_col)
     result.by_condition = _by_category(frame, "condition", price_col, per_sqm_col)
 
+    result.variable_assessment = assess_variables(frame, price_col)
     result.notes = _quality_notes(result, frame, listing_type)
+    result.notes.append("Property associations are exploratory and unadjusted for location, size, "
+                        "or collection date. They do not establish causation or predictive value; "
+                        "weak marginal association does not establish irrelevance.")
     return result
 
 
@@ -147,8 +155,8 @@ def _overall(
     listing_type: str,
 ) -> dict[str, Any]:
     clean = prices.dropna()
-    per_sqm = pd.to_numeric(frame.get(per_sqm_col), errors="coerce").dropna()
-    area = pd.to_numeric(frame.get(area_col), errors="coerce").dropna()
+    per_sqm = pd.to_numeric(frame.get(per_sqm_col, pd.Series(dtype=float)), errors="coerce").dropna()
+    area = pd.to_numeric(frame.get(area_col, pd.Series(dtype=float)), errors="coerce").dropna()
 
     median = float(clean.median())
     mean = float(clean.mean())
@@ -171,7 +179,7 @@ def _overall(
         out["mean_per_sqm"] = round(float(per_sqm.mean()), 2)
     if len(area):
         out["median_area_sqm"] = round(float(area.median()), 1)
-    rooms = pd.to_numeric(frame.get("rooms"), errors="coerce").dropna()
+    rooms = pd.to_numeric(frame.get("rooms", pd.Series(dtype=float)), errors="coerce").dropna()
     if len(rooms):
         out["median_rooms"] = round(float(rooms.median()), 1)
     if "date" in frame.columns:

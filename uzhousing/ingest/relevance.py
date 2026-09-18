@@ -58,7 +58,7 @@ STRONG_EXCLUSIONS: list[tuple[str, str]] = [
     (r"(^|_)(id|uuid|guid|hash|pk|fk|key)(_|$)", "a record key with no analytical meaning"),
     (r"(url|link|href|slug|permalink|token|api_|endpoint)", "a link or technical token"),
     (
-        r"(view|click|impression|favou?rite|bookmark|like|share|comment_count|call_count|"
+        r"((^|_)(views?|clicks?|impressions?|favou?rites?|bookmarks?|likes?|shares|share_count)(_|$)|comment_count|call_count|"
         r"message_count|contact_count|response_count)",
         "an advert engagement counter, not a price or a quantity of housing",
     ),
@@ -93,7 +93,7 @@ WEAK_EXCLUSIONS: list[tuple[str, str]] = [
         "a detail about who placed the advert, not about the property",
     ),
     (
-        r"^(is|has)_|(promoted|featured|boost|premium|vip|highlight|banner|paid_ad|sponsored)",
+        r"(^|_)(promoted|featured|boost|premium|vip|highlight|banner|paid_ad|sponsored)(_|$)",
         "an advert placement flag sold by the platform",
     ),
     (
@@ -279,6 +279,7 @@ def _data_quality_failure(col: ColumnProfile) -> str:
     if (
         col.non_null >= IDENTIFIER_MIN_ROWS
         and col.unique == col.non_null
+        and col.role not in CORE_ROLES
         and "int" in col.dtype.lower()
     ):
         return "one distinct whole number per row, which is a key rather than a measurement"

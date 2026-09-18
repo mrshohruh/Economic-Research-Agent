@@ -153,6 +153,23 @@ def compose(
     # ---- 6. drivers -----------------------------------------------------
     doc.heading(labels["drivers"], 1)
     doc.paragraphs(narrative.drivers)
+    if section is not None:
+        selected = [v for v in section.variable_assessment if v["selected"]]
+        if selected:
+            rows = []
+            for v in selected:
+                evidence = (
+                    f"rho = {v['association']:.3f}" if v["association"] is not None else
+                    "; ".join(f"{g['category']}: {g['median_price']:,.0f} (n={g['observations']})"
+                              for g in v["groups"])
+                )
+                rows.append({"Variable": v["name"], "Method": v["method"],
+                             "Observations": v["observations"], "Evidence": evidence})
+            doc.table(pd.DataFrame(rows), title="Property attributes associated with asking price",
+                      include_index=False, max_rows=30,
+                      note="Exploratory, unadjusted associations. Numeric candidates use absolute "
+                           "Spearman correlation >= 0.15; categories require 15 observations per group. "
+                           "These comparisons do not establish causation.")
     _place(doc, by_kind, "correlation")
     for figure in by_kind.get("driver", []):
         _emit(doc, figure)

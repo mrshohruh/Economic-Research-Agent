@@ -745,6 +745,14 @@ def _write_cross_section(n: Narrative, section: dict[str, Any]) -> None:
                     "location rather than size."
                 )
             )
+    for variable in section.get("variable_assessment", []):
+        if variable.get("selected") and variable.get("association") is not None:
+            n.drivers.append(
+                f"{variable['name'].replace('_', ' ').capitalize()} has a Spearman rank "
+                f"correlation of {variable['association']:.3f} with asking price across "
+                f"{variable['observations']:,} paired observations. This is an unadjusted "
+                "association, not a causal effect."
+            )
     # The cross-section's own caveats already reach the limitations section
     # through the brief's shared notes list; adding them here would print twice.
 

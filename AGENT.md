@@ -87,8 +87,8 @@ permits, mortgage lending, interest rates, incomes, inflation, exchange rates, p
 
 Dropped: record keys, URLs and tokens, advert view/click/favourite counters, seller and advert
 ratings, photo and media counts, map coordinates, promotion and placement flags, ingestion
-bookkeeping, and any column that is empty, more than 95% missing, constant, or holds one distinct
-whole number per row.
+bookkeeping, and any column that is empty, more than 95% missing, constant, or is an unrecognised numeric column holding one distinct
+whole number per row. Recognised housing and macro measures are exempt from this identifier heuristic.
 
 The screen is conservative by design. A column carrying a recognised housing or macroeconomic role
 survives anything short of an unambiguous exclusion match or a data-quality failure, and if the
@@ -221,3 +221,23 @@ Where the platform configuration and the existing pipeline differed:
 | Citations | cite URLs behind any policy/news claim | attribute claims to their source | **Merged**, tightened to inline publication + URL: rule 4. |
 | Variable relevance | — | — | **New in both.** Stage 3, per the standing requirement that variables are understood first and unrelated ones dropped. |
 | Screening visibility | — | — | **Logged, not reported.** Console and run log; never the Word document. |
+
+
+### Offline property-variable selection
+
+Without an API key, listing analysis inspects the available columns and tests
+recognised property attributes against asking price. Numeric attributes use
+Spearman rank correlation; absolute correlations of at least 0.15 are exploratory
+candidates. Categorical attributes use price medians for groups with at least 15
+observations. Both require at least 30 paired rows and 20% price coverage.
+Unknown meanings are flagged for review rather than guessed. Price-derived columns
+are excluded as predictors. Weak marginal associations do not prove irrelevance,
+and none of these comparisons establish causation or predictive value.
+
+Selected comparisons appear in the Word report even without an API key. Every
+column decision, including exclusions and reasons, is saved in the run JSON at
+brief.cross_section.variable_assessment. This assessment concerns the normalised
+listing table; nested feed attributes not extracted by the loader are not assessed.
+Known housing measures are no longer rejected merely because their integer values
+are all distinct. Property flags are not treated as promotion flags solely because
+their names begin with is_ or has_.

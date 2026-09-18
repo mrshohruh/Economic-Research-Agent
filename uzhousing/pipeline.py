@@ -294,10 +294,11 @@ def analyse(understanding: Understanding, llm: LLM | None = None) -> AnalysisRes
     # that explains nothing, so attribution is left to the external evidence.
     if understanding.dataset.listing_type:
         result.notes.append(
-            "No candidate drivers could be tested: the source file measures advertised prices "
+            "No macroeconomic time-series drivers could be tested: the source file measures advertised prices "
             "only and carries no interest rate, income, credit or construction series. The "
             "explanation of why prices sit where they do therefore rests on the external policy "
-            "and macroeconomic evidence, not on a correlation computed here."
+            "and macroeconomic evidence. Property-attribute associations are assessed separately "
+            "in the cross-sectional analysis."
         )
     else:
         result.drivers = drivers_mod.analyse_drivers(
