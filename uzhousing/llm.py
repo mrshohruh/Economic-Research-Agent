@@ -35,9 +35,10 @@ class LLMUnavailable(RuntimeError):
 class LLM:
     """Small helper around ``anthropic.Anthropic``."""
 
-    def __init__(self, api_key: str = "", model: str = "claude-sonnet-5") -> None:
+    def __init__(self, api_key: str = "", model: str = "claude-opus-5") -> None:
         self.model = model
         self._client = None
+        self.last_usage: dict[str, int] = {}
         self._last_error: str | None = None
         if not api_key:
             self._last_error = "no ANTHROPIC_API_KEY set"
@@ -115,6 +116,8 @@ class LLM:
                 )
                 stop_reason = str(getattr(message, "stop_reason", "") or "")
                 if text.strip():
+                    usage = getattr(message, "usage", None)
+                    self.last_usage = {key: int(getattr(usage, key, 0) or 0) for key in ("input_tokens", "output_tokens")}
                     return text.strip(), stop_reason
                 last_exc = RuntimeError(
                     "empty response"

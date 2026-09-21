@@ -46,7 +46,7 @@ class Settings:
     """Everything the pipeline needs to know about how to run."""
 
     anthropic_api_key: str = ""
-    model: str = "claude-sonnet-5"
+    model: str = "claude-opus-5"
     web_research: bool = True
     search_results_per_query: int = 6
     pages_to_read: int = 3
@@ -77,7 +77,7 @@ class Settings:
             lang = "en"
         return cls(
             anthropic_api_key=(os.getenv("ANTHROPIC_API_KEY", "") or "").strip(),
-            model=(os.getenv("ANTHROPIC_MODEL", "") or "claude-sonnet-5").strip(),
+            model=(os.getenv("ANTHROPIC_MODEL", "") or "claude-opus-5").strip(),
             web_research=_bool_env("WEB_RESEARCH", True),
             search_results_per_query=_int_env("SEARCH_RESULTS_PER_QUERY", 6),
             pages_to_read=_int_env("PAGES_TO_READ", 3),

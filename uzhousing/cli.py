@@ -34,6 +34,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--data", "-d",
         help="path to a .json, .sql, .sqlite, .csv or .xlsx file, or a folder of them",
     )
+    source.add_argument("--olx", action="store_true", help="collect OLX listings and write an Uzbek PDF/Word bulletin")
+    source.add_argument("--olx-pages", type=int, default=5, help="pages per OLX category (1-100; default 5)")
+    source.add_argument("--olx-snapshot", help="regenerate the Uzbek bulletin from a saved OLX snapshot")
+    source.add_argument("--olx-browser", action="store_true",
+                        help="collect through a real browser (needed: plain HTTP is refused with 403)")
+    source.add_argument("--olx-show-browser", action="store_true",
+                        help="with --olx-browser, show the browser window instead of running it hidden")
+    source.add_argument("--uybor-pages", type=int, default=0, metavar="N",
+                        help="also collect N pages of up to 100 Uybor.uz listings (0 = skip)")
+    source.add_argument("--olx-archive", metavar="DIR",
+                        help="folder of archived OLX .db files, to add a historical price trend")
+    source.add_argument("--olx-rebuild-history", action="store_true",
+                        help="re-read the archive instead of using the cached monthly series")
     source.add_argument("--db", help="SQLAlchemy database URL, e.g. postgresql://user:pw@host/db")
     source.add_argument("--query", "-q", help="SQL query to run against --db or a SQLite --data file")
 
@@ -74,7 +87,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Now run:  python run.py --data {path}")
         return 0
 
-    if not args.data and not args.db:
+    if sum(bool(x) for x in (args.data, args.db, args.olx, args.olx_snapshot)) > 1:
+        print("Choose only one data source", file=sys.stderr)
+        return 2
+
+    if not args.data and not args.db and not args.olx and not args.olx_snapshot:
         build_parser().print_help()
         print("\nerror: pass --data <file> or --db <url> (or --make-sample to try it out)", file=sys.stderr)
         return 2
@@ -103,6 +120,25 @@ def main(argv: list[str] | None = None) -> int:
     print("\n" + "=" * 72)
     print("  Uzbekistan Housing Market Research Agent")
     print("=" * 72)
+
+    if args.olx or args.olx_snapshot:
+        if args.lang and args.lang != "uz":
+            print("The OLX bulletin currently supports --lang uz only.", file=sys.stderr)
+            return 2
+        from .report.olx_bulletin import run_olx
+        try:
+            result = run_olx(settings, pages=args.olx_pages, progress=progress,
+                             title=args.title, snapshot_path=args.olx_snapshot,
+                             browser=args.olx_browser, headless=not args.olx_show_browser,
+                             archive=args.olx_archive, rebuild_history=args.olx_rebuild_history,
+                             uybor_pages=args.uybor_pages)
+        except Exception as exc:
+            print(f"OLX failed: {exc}", file=sys.stderr)
+            if args.verbose:
+                raise
+            return 1
+        print(f"PDF: {result.pdf_path}\nWord: {result.report_path}\nLog: {result.run_log}")
+        return 0
 
     try:
         result = run(

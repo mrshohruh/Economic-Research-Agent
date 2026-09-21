@@ -97,9 +97,9 @@ with st.sidebar:
     )
     model = st.selectbox(
         "Model",
-        ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5-20251001"],
+        ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
         index=0,
-        help="Opus gives the best writing; Sonnet is a good balance.",
+        help="Opus is the default and gives the best writing; Sonnet is faster and cheaper.",
     )
 
     st.divider()
@@ -132,7 +132,7 @@ DEPTH = {"quick": (4, 1), "standard": (6, 3), "deep": (10, 5)}
 # Data source
 # ---------------------------------------------------------------------------
 st.subheader("1 · Data")
-tab_upload, tab_sample, tab_db = st.tabs(["Upload a file", "Use sample data", "Connect a database"])
+tab_upload, tab_sample, tab_db, tab_olx = st.tabs(["Upload a file", "Use sample data", "Connect a database", "OLX.uz avtomatik"])
 
 data_path: Path | None = None
 connection_url: str | None = None
@@ -188,17 +188,27 @@ with tab_db:
 # ---------------------------------------------------------------------------
 st.subheader("2 · Generate the report")
 
-ready = data_path is not None or connection_url is not None
+with tab_olx:
+    use_olx = st.checkbox("OLX.uz dan avtomatik yig'ish", value=False)
+    olx_pages = st.number_input("Har bir toifa uchun sahifalar", min_value=1, max_value=100, value=5)
+    olx_browser = st.checkbox("Brauzer orqali yig'ish", value=True,
+                              help="OLX oddiy HTTP so'rovlarini HTTP 403 bilan rad etadi, shuning uchun sahifalar haqiqiy brauzerda ochiladi.")
+    olx_archive = st.text_input("Tarixiy arxiv papkasi (ixtiyoriy)", value="",
+                                help="Arxivlangan OLX .db fayllari bo'lgan papka. Ko'rsatilsa, hisobotga kvartira sotuvi bo'yicha tarixiy narx qatori qo'shiladi.")
+    st.caption("Sotuv va uzoq muddatli ijara: kvartira va hovlilar. Hisobot o'zbek (lotin) tilida, PDF va Word shaklida tayyorlanadi. OLX kirishni cheklasa, sabab ko'rsatiladi.")
+
+ready = data_path is not None or connection_url is not None or use_olx
 if not ready:
     st.info("Choose a data source above to enable the run.")
 
-if st.button("Run the analysis", type="primary", disabled=not ready, use_container_width=False):
+if st.button("Run the analysis", type="primary", disabled=not ready, width="content"):
     settings.anthropic_api_key = api_key.strip()
     settings.model = model
     settings.web_research = web
     settings.language = language
     settings.search_results_per_query, settings.pages_to_read = DEPTH[depth]
 
+    st.session_state.pop("result", None)
     log_box = st.status("Starting…", expanded=True)
     lines: list[str] = []
 
@@ -209,14 +219,18 @@ if st.button("Run the analysis", type="primary", disabled=not ready, use_contain
 
     try:
         with st.spinner("Working…"):
-            result = run(
-                settings=settings,
-                data_path=data_path,
-                connection_url=connection_url,
-                query=query,
-                title=title,
-                progress=progress,
-            )
+            if use_olx:
+                from uzhousing.report.olx_bulletin import run_olx
+                result = run_olx(settings, pages=int(olx_pages), progress=progress,
+                                 title="" if title == "Uzbekistan Housing Market" else title,
+                                 browser=olx_browser,
+                                 archive=olx_archive.strip() or None)
+            else:
+                result = run(
+                    settings=settings, data_path=data_path,
+                    connection_url=connection_url, query=query,
+                    title=title, progress=progress,
+                )
         log_box.update(label="Done", state="complete", expanded=False)
         st.session_state["result"] = result
     except Exception as exc:
@@ -231,6 +245,16 @@ result = st.session_state.get("result")
 if result is not None and result.ok:
     st.divider()
     st.subheader("3 · Results")
+
+    if result.pdf_path:
+        st.success("O'zbek tilidagi OLX hisoboti tayyor.")
+        st.download_button("PDF hisobotni yuklab olish", data=result.pdf_path.read_bytes(),
+                           file_name=result.pdf_path.name, mime="application/pdf")
+        st.download_button("Word hisobotni yuklab olish", data=result.report_path.read_bytes(),
+                           file_name=result.report_path.name,
+                           mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        st.caption(f"Jadvallar, grafiklar va metodologiya hisobot ichida. Yig'ish qaydi: {result.run_log}")
+        st.stop()
 
     analysis = result.analysis
     headline = (analysis.brief.get("headline") or {}) if analysis else {}
@@ -260,11 +284,11 @@ if result is not None and result.ok:
     with tabs[0]:
         for figure in result.figures:
             st.markdown(f"**{figure.id}. {figure.title}**")
-            st.image(str(figure.path), use_container_width=True)
+            st.image(str(figure.path), width="stretch")
             st.caption(figure.caption)
             if figure.table is not None and len(figure.table):
                 with st.expander("Underlying data"):
-                    st.dataframe(figure.table, use_container_width=True)
+                    st.dataframe(figure.table, width="stretch")
             st.divider()
 
     with tabs[1]:
@@ -291,7 +315,7 @@ if result is not None and result.ok:
                         }
                         for r in narrative.recommendations
                     ]),
-                    use_container_width=True, hide_index=True,
+                    width="stretch", hide_index=True,
                 )
             st.caption(f"Narrative written by: {narrative.generated_by}")
 
@@ -318,7 +342,7 @@ if result is not None and result.ok:
                     }
                     for l in links
                 ]),
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
             )
 
     with tabs[3]:
@@ -335,7 +359,7 @@ if result is not None and result.ok:
                     }
                     for e in research.policy_events
                 ]),
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
             )
         if research:
             sources = research.source_index()
@@ -362,10 +386,10 @@ if result is not None and result.ok:
                     }
                     for c in profile.columns
                 ]),
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
             )
             st.markdown("#### Sample of the tidied data")
-            st.dataframe(understanding.tidy.head(200), use_container_width=True)
+            st.dataframe(understanding.tidy.head(200), width="stretch")
 
     with tabs[5]:
         if result.warnings:

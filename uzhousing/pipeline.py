@@ -67,6 +67,7 @@ class AnalysisResult:
 @dataclass
 class RunResult:
     report_path: Path | None = None
+    pdf_path: Path | None = None
     figures: list[Figure] = field(default_factory=list)
     analysis: AnalysisResult | None = None
     research: research_mod.ResearchFindings | None = None

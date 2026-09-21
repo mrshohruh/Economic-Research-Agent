@@ -47,3 +47,19 @@ def test_run_button_is_disabled_without_data(app):
     run_buttons = [b for b in app.button if "Run the analysis" in b.label]
     assert run_buttons, "the run button should be present"
     assert app.info, "expected the 'choose a data source' hint"
+
+
+def test_olx_result_shows_downloads_without_empty_analysis(tmp_path, monkeypatch):
+    from uzhousing.pipeline import RunResult
+    from uzhousing.report import olx_bulletin
+    docx = tmp_path / 'report.docx'
+    pdf = tmp_path / 'report.pdf'
+    docx.write_bytes(b'test')
+    pdf.write_bytes(b'%PDF-test')
+    monkeypatch.setattr(olx_bulletin, 'run_olx', lambda *a, **kw: RunResult(report_path=docx, pdf_path=pdf))
+    instance = AppTest.from_file(str(ROOT / 'app.py'), default_timeout=90).run()
+    next(w for w in instance.checkbox if 'OLX.uz' in w.label).check().run()
+    next(w for w in instance.button if 'Run the analysis' in w.label).click().run()
+    assert not instance.exception
+    assert any('OLX' in item.value for item in instance.success)
+    assert not instance.metric
