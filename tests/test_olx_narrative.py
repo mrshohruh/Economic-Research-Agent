@@ -84,3 +84,122 @@ def test_method_authorship_updated_without_new_blocks():
     assert len(sections[-1].blocks)==1
     assert len(sections[-1].blocks[0].items)==1
     assert 'Anthropic Claude' in sections[-1].blocks[0].items[0]
+
+
+def evidence_of(llm):
+    """The prompt the model was sent, decoded."""
+    return json.loads(llm.complete_json.call_args[0][0])
+
+
+def test_prose_decimals_and_periods_are_masked_as_single_facts():
+    sections = [Section(TITLES['summary'],
+                        [Bullets(['Mediana 20,37 mln so\'m/m², 2026-yil II choragida.'])])]
+    llm = fake()
+    captured = {}
+
+    def response(prompt, **kwargs):
+        captured.update(json.loads(prompt))
+        return {'blocks': [{'id': t['id'], 'items': ['Matn.'] * t['item_count']}
+                           for t in captured['targets']]}
+    llm.complete_json.side_effect = response
+    enrich(sections, llm)
+    values = set(captured['fact_values'].values())
+    # A comma decimal is one number, and the whole period phrase is one fact,
+    # so the model cannot pair a year with a quarter of its own choosing.
+    assert '20,37' in values and '2026-yil II choragida' in values
+
+
+def test_table_cells_are_masked_one_value_at_a_time():
+    frame = pd.DataFrame({'Hudud': ['Toshkent'], "E'lonlar": [1025], 'Mediana': [17.51]})
+    sections = [Section(TITLES['rent'], [Bullets(['Matn.']), Tbl('Jadval', frame)])]
+    llm = fake()
+    captured = {}
+
+    def response(prompt, **kwargs):
+        captured.update(json.loads(prompt))
+        return {'blocks': [{'id': t['id'], 'items': ['Matn.'] * t['item_count']}
+                           for t in captured['targets']]}
+    llm.complete_json.side_effect = response
+    enrich(sections, llm)
+    values = set(captured['fact_values'].values())
+    assert {'1025', '17.51'} <= values and '1025,17.51' not in values
+
+
+def test_a_quarter_the_model_invented_is_refused():
+    sections = content()
+    llm = fake()
+    llm.complete_json.side_effect = None
+    llm.complete_json.return_value = {'blocks': [
+        {'id': 's0b0', 'items': ['III chorakda narx oshdi.']},
+        {'id': 's1b0', 'items': ['Matn.']}]}
+    with pytest.raises(LLMUnavailable):
+        enrich(sections, llm)
+    assert sections[0].blocks[0].items == ['Median 500 USD.']
+
+
+def test_flagged_paragraphs_are_sent_back_for_one_revision_round():
+    sections = content()
+    llm = fake()
+    calls = []
+
+    def response(prompt, **kwargs):
+        data = json.loads(prompt)
+        calls.append(data)
+        worn = 'Narx darajalar bo\'yicha o\'zgardi.'
+        text = worn if len(calls) == 1 else 'Qayta yozilgan xatboshi, chunki ma\'nosi bor.'
+        return {'blocks': [{'id': t['id'], 'items': [text] * t['item_count']}
+                           for t in data['targets']]}
+    llm.complete_json.side_effect = response
+    meta = enrich(sections, llm)
+    assert len(calls) == 2 and 'revise' in calls[1]
+    assert meta['editorial']['revised_blocks'] == len(calls[1]['targets'])
+    assert sections[0].blocks[0].items == ['Qayta yozilgan xatboshi, chunki ma\'nosi bor.']
+    assert meta['editorial']['remaining']['by_code'].get('phrase') is None
+
+
+def test_a_failed_revision_keeps_the_accepted_first_draft():
+    sections = content()
+    llm = fake()
+    state = {'calls': 0}
+
+    def response(prompt, **kwargs):
+        state['calls'] += 1
+        if state['calls'] > 1:
+            raise LLMUnavailable('service error')
+        data = json.loads(prompt)
+        return {'blocks': [{'id': t['id'], 'items': ["Narx darajalar bo'yicha o'zgardi."]
+                            * t['item_count']} for t in data['targets']]}
+    llm.complete_json.side_effect = response
+    meta = enrich(sections, llm)
+    assert meta['editorial']['revised_blocks'] == 0
+    assert sections[0].blocks[0].items == ["Narx darajalar bo'yicha o'zgardi."]
+
+
+def test_a_period_and_the_numbers_beside_it_are_masked_in_one_pass():
+    # Two passes nested a reference inside another ([[F[[F46]]]]), and the
+    # model copying the inner one printed a literal [[F46]] in the report.
+    from uzhousing.report.olx_narrative import PROSE_MASK
+    facts = {}
+
+    def replace(match):
+        token = f'[[F{len(facts)}]]'
+        facts[token] = match.group()
+        return token
+    masked = PROSE_MASK.sub(replace, "2026-yil II choragida narx 20,37 mln so'm.")
+    assert masked == "[[F0]] narx [[F1]] mln so'm."
+    assert list(facts.values()) == ['2026-yil II choragida', '20,37']
+    assert '[[F[[' not in masked
+
+
+def test_an_undecodable_reference_never_reaches_the_page():
+    sections = content()
+    llm = fake()
+    llm.complete_json.side_effect = None
+    # Whatever produced it, a paragraph that still carries a reference fragment
+    # fails the run instead of being printed.
+    llm.complete_json.return_value = {'blocks': [
+        {'id': 's0b0', 'items': ['Narx [[F oshdi.']},
+        {'id': 's1b0', 'items': ['Matn.']}]}
+    with pytest.raises(LLMUnavailable):
+        enrich(sections, llm)
+    assert sections[0].blocks[0].items == ['Median 500 USD.']

@@ -591,16 +591,60 @@ def thin_groups(quarterly: pd.DataFrame, group: str, quarter, *, market=None,
             if count < minimum and name != UNKNOWN}
 
 
-def index_series(quarterly: pd.DataFrame, rates=None) -> pd.DataFrame:
-    """An asking-price index, the first observed quarter set to 100.
+#: The strata the index holds fixed: a region and a market segment. Advert
+#: volumes move between them from quarter to quarter far faster than prices do.
+INDEX_STRATA = ["region_uz", "market"]
 
-    Built from listings, not transactions, and weighted by listing count rather
-    than by population, so it is not comparable with an official house-price
-    index however similar the shape.
+
+def fixed_weights(quarterly: pd.DataFrame, strata=None) -> pd.Series:
+    """Weights that do not move with advert volumes.
+
+    Each quarter brings a different number of adverts from each region and
+    segment, so weighting a quarter by its own volumes mixes a change in what
+    was advertised into what looks like a change in price. The weight of a
+    stratum here is its share of adverts over the **whole** period, and only
+    strata observed in every quarter are carried, so each quarter prices the
+    same basket. The share of the market that basket covers is reported beside
+    the index rather than assumed to be all of it.
+    """
+    strata = strata or INDEX_STRATA
+    if quarterly.empty:
+        return pd.Series(dtype=float)
+    quarters = quarterly["quarter"].nunique()
+    counts = quarterly.groupby(strata, observed=True).agg(
+        listings=("listings", "sum"), seen=("quarter", "nunique"))
+    balanced = counts[counts["seen"] == quarters]["listings"]
+    if balanced.empty or not balanced.sum():
+        return pd.Series(dtype=float)
+    return balanced / balanced.sum()
+
+
+def index_series(quarterly: pd.DataFrame, rates=None, strata=None) -> pd.DataFrame:
+    """An asking-price index on fixed strata, the first observed quarter = 100.
+
+    The level of each quarter is the weighted mean of that quarter's regional
+    and segment medians at weights fixed over the whole period, so a quarter in
+    which the capital advertised twice as much as usual does not raise the
+    national figure on its own. Where no stratum is observed in every quarter —
+    a short archive, or one region arriving late — the series falls back to the
+    quarter's own volumes and says so in ``weighting``.
+
+    Built from asking prices, not transactions, and not weighted by population,
+    so it is not comparable with an official house-price index however similar
+    its shape.
     """
     if quarterly.empty:
         return pd.DataFrame()
-    levels = national(quarterly, "quarter")
+    strata = strata or INDEX_STRATA
+    weights = fixed_weights(quarterly, strata)
+    if weights.empty:
+        levels = national(quarterly, "quarter")
+        levels["coverage"] = 100.0
+        levels["strata"] = 0
+        weighting = "volume"
+    else:
+        levels = _fixed_level(quarterly, weights, strata)
+        weighting = "fixed"
     base = levels["median_usd_sqm"].iloc[0]
     levels = levels.assign(index=(levels["median_usd_sqm"] / base * 100).round(1))
     # How much of each quarter was actually observed: the archive's first file
@@ -610,7 +654,30 @@ def index_series(quarterly: pd.DataFrame, rates=None) -> pd.DataFrame:
     if rates:
         levels["som_sqm"] = [in_som(v, rates.get(q))
                              for v, q in zip(levels["median_usd_sqm"], levels["quarter"])]
+    levels.attrs["weighting"] = weighting
     return levels
+
+
+def _fixed_level(quarterly: pd.DataFrame, weights: pd.Series, strata) -> pd.DataFrame:
+    """Each quarter's level at the fixed weights, and how much it covers."""
+    keyed = quarterly.set_index(strata)
+    rows = []
+    for quarter, group in keyed.groupby("quarter", observed=True):
+        priced = group[group.index.isin(weights.index)]
+        share = weights.reindex(priced.index).dropna()
+        if share.empty:
+            continue
+        medians = priced.loc[share.index, "median_usd_sqm"]
+        rows.append({
+            "quarter": quarter,
+            "listings": int(group["listings"].sum()),
+            "median_usd_sqm": float((medians * share).sum() / share.sum()),
+            # The basket's share of the quarter's adverts: a fixed basket that
+            # covers a third of the market is a different claim from one that
+            # covers nine tenths, and the reader is told which.
+            "coverage": round(100 * priced["listings"].sum() / group["listings"].sum(), 1),
+            "strata": int(len(share))})
+    return pd.DataFrame(rows).sort_values("quarter", ignore_index=True)
 
 
 def gap_months(series: pd.DataFrame) -> list:

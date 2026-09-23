@@ -177,3 +177,51 @@ def test_late_http_400_is_survived_but_403_is_not():
     client = OLXClient(session, pause=lambda _: None)
     with pytest.raises(CollectionError, match='chekladi'):
         list(client.iter_offers(category_id=1147, max_pages=5, limit=2))
+
+
+def test_no_page_limit_reads_every_page_the_site_serves():
+    # The default asks until the marketplace runs out, not for a preset count.
+    session = Mock()
+    session.get.side_effect = [reply({'data': [offer(1), offer(2)]}),
+                               reply({'data': [offer(3), offer(4)]}),
+                               reply({'data': [offer(5)]})]
+    client = OLXClient(session, pause=lambda _: None)
+    assert [o['id'] for o in client.iter_offers(category_id=1147, limit=2)] == [1, 2, 3, 4, 5]
+    assert client.last_stop == 'exhausted' and client.last_pages == 3
+
+
+def test_unlimited_run_stops_when_a_page_repeats():
+    session = Mock()
+    session.get.return_value = reply({'data': [offer(i) for i in range(40)]})
+    client = OLXClient(session, pause=lambda _: None)
+    collected = list(client.iter_offers(category_id=1147, limit=40))
+    # Every page repeats the same ids, so the walk ends on the first repeat.
+    assert len(collected) == 40 and client.last_stop == 'exhausted'
+    assert session.get.call_count == 2
+
+
+def test_listing_pages_walk_ends_past_the_last_page(tmp_path):
+    session = Mock()
+    cards = '<div data-cy="l-card" id="11"></div><div data-cy="l-card" id="12"></div>'
+    # Category verification disagrees, so the listing-page walk is used; the
+    # third request returns a page with no cards at all, which ends it.
+    per_category = [reply(text=cards), reply({'data': categorised(11, 13)}),
+                    reply({'data': categorised(12, 99)}),
+                    reply(text='<div data-cy="l-card" id="21"></div>'),
+                    reply({'data': categorised(21, 13)}),
+                    reply(text='<html></html>')]
+    session.get.side_effect = ([reply(text='User-agent: *\nAllow: /')]
+                               + per_category * 4
+                               + [reply([{'Rate': '12500', 'Date': '21.09.2026'}])])
+    path = collect(tmp_path, session=session, pause=lambda _: None, progress=lambda _: None)
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    assert [c['stop'] for c in payload['coverage']] == ['exhausted'] * 4
+    assert [c['pages_requested'] for c in payload['coverage']] == [3] * 4
+    assert len(payload['data']) == 12  # three listings per category
+
+
+def test_page_count_must_be_positive_or_absent(tmp_path):
+    for bad in (0, -1, 1001, 'all'):
+        with pytest.raises(ValueError):
+            collect(tmp_path, pages=bad, session=Mock(), pause=lambda _: None,
+                    progress=lambda _: None)

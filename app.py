@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from uzhousing.config import LANGUAGES, Settings  # noqa: E402
+from uzhousing.llm import provider_for  # noqa: E402
 from uzhousing.pipeline import run  # noqa: E402
 
 ACCENT = "#2a78d6"
@@ -87,19 +88,22 @@ settings = Settings.from_env()
 with st.sidebar:
     st.header("Settings")
 
-    api_key = st.text_input(
-        "Anthropic API key",
-        value=settings.anthropic_api_key,
-        type="password",
-        help="Optional. With a key, the analysis, policy synthesis and report prose are written "
-             "by Claude. Without one, the agent falls back to deterministic statistics and "
-             "template narrative — the report is still complete.",
-    )
+    # The model comes first because it decides which vendor's key is needed.
     model = st.selectbox(
         "Model",
-        ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
+        ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001", "gpt-6-astra"],
         index=0,
-        help="Opus is the default and gives the best writing; Sonnet is faster and cheaper.",
+        help="Opus is the default and gives the best writing; Sonnet is faster and cheaper. "
+             "A gpt-* id is sent to OpenAI instead and needs an OpenAI key.",
+    )
+    provider = provider_for(model)
+    api_key = st.text_input(
+        f"{'OpenAI' if provider == 'openai' else 'Anthropic'} API key",
+        value=settings.openai_api_key if provider == "openai" else settings.anthropic_api_key,
+        type="password",
+        help="Optional. With a key, the analysis, policy synthesis and report prose are written "
+             "by the model. Without one, the agent falls back to deterministic statistics and "
+             "template narrative — the report is still complete.",
     )
 
     st.divider()
@@ -190,11 +194,18 @@ st.subheader("2 · Generate the report")
 
 with tab_olx:
     use_olx = st.checkbox("OLX.uz dan avtomatik yig'ish", value=False)
-    olx_pages = st.number_input("Har bir toifa uchun sahifalar", min_value=1, max_value=100, value=5)
+    olx_all_pages = st.checkbox(
+        "Barcha sahifalarni yig'ish", value=True,
+        help="Har bir toifa sayt e'lon berishni to'xtatgunicha o'qiladi.")
+    olx_pages = None
+    if not olx_all_pages:
+        olx_pages = int(st.number_input("Har bir toifa uchun sahifalar",
+                                        min_value=1, max_value=100, value=5))
     olx_browser = st.checkbox("Brauzer orqali yig'ish", value=True,
                               help="OLX oddiy HTTP so'rovlarini HTTP 403 bilan rad etadi, shuning uchun sahifalar haqiqiy brauzerda ochiladi.")
-    olx_archive = st.text_input("Tarixiy arxiv papkasi (ixtiyoriy)", value="",
-                                help="Arxivlangan OLX .db fayllari bo'lgan papka. Ko'rsatilsa, hisobotga kvartira sotuvi bo'yicha tarixiy narx qatori qo'shiladi.")
+    olx_archive = st.text_input("Tarixiy arxiv papkasi (ixtiyoriy)", value=settings.olx_archive,
+                                help="Arxivlangan OLX .db fayllari bo'lgan papka. Ko'rsatilsa, hisobotga kvartira sotuvi bo'yicha tarixiy narx qatori qo'shiladi. "
+                                     "Standart qiymat .env dagi OLX_ARCHIVE dan olinadi. Papka .db fayllarni bevosita o'zida saqlashi kerak.")
     st.caption("Sotuv va uzoq muddatli ijara: kvartira va hovlilar. Hisobot o'zbek (lotin) tilida, PDF va Word shaklida tayyorlanadi. OLX kirishni cheklasa, sabab ko'rsatiladi.")
 
 ready = data_path is not None or connection_url is not None or use_olx
@@ -202,8 +213,11 @@ if not ready:
     st.info("Choose a data source above to enable the run.")
 
 if st.button("Run the analysis", type="primary", disabled=not ready, width="content"):
-    settings.anthropic_api_key = api_key.strip()
     settings.model = model
+    if provider_for(model) == "openai":
+        settings.openai_api_key = api_key.strip()
+    else:
+        settings.anthropic_api_key = api_key.strip()
     settings.web_research = web
     settings.language = language
     settings.search_results_per_query, settings.pages_to_read = DEPTH[depth]
@@ -221,7 +235,7 @@ if st.button("Run the analysis", type="primary", disabled=not ready, width="cont
         with st.spinner("Working…"):
             if use_olx:
                 from uzhousing.report.olx_bulletin import run_olx
-                result = run_olx(settings, pages=int(olx_pages), progress=progress,
+                result = run_olx(settings, pages=olx_pages, progress=progress,
                                  title="" if title == "Uzbekistan Housing Market" else title,
                                  browser=olx_browser,
                                  archive=olx_archive.strip() or None)

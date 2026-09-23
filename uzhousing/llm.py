@@ -1,4 +1,9 @@
-"""Thin, defensive wrapper around the Anthropic Messages API.
+"""Thin, defensive wrapper around the hosted chat APIs.
+
+Two vendors are supported and the model id is the only switch between them:
+``claude-*`` goes to the Anthropic Messages API, ``gpt-*`` and the ``o*``
+reasoning series to the OpenAI Responses API. There is no separate provider
+setting, so an id and a provider can never fall out of step.
 
 The whole pipeline is designed to work without an API key, so every entry point
 here either returns a usable value or raises :class:`LLMUnavailable`, which
@@ -28,27 +33,55 @@ MAX_OUTPUT_TOKENS = 64_000
 JSON_MIN_TOKENS = 8_000
 
 
+# Model ids are matched by prefix rather than listed exhaustively, so a newly
+# released model works without a code change. An unrecognised id is treated as
+# Anthropic, which is what every id in this project was before OpenAI was added.
+_ANTHROPIC_PREFIXES = ("claude", "anthropic.")
+_OPENAI_PREFIXES = ("gpt", "chatgpt", "o1", "o3", "o4")
+
+ENV_KEY_FOR_PROVIDER = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+}
+
+
+def provider_for(model: str) -> str:
+    """Return ``"anthropic"`` or ``"openai"`` for a model id."""
+    name = (model or "").strip().lower()
+    if name.startswith(_ANTHROPIC_PREFIXES):
+        return "anthropic"
+    if name.startswith(_OPENAI_PREFIXES):
+        return "openai"
+    return "anthropic"
+
+
 class LLMUnavailable(RuntimeError):
     """Raised when no LLM answer could be obtained."""
 
 
 class LLM:
-    """Small helper around ``anthropic.Anthropic``."""
+    """Small helper around ``anthropic.Anthropic`` and ``openai.OpenAI``."""
 
     def __init__(self, api_key: str = "", model: str = "claude-opus-5") -> None:
         self.model = model
+        self.provider = provider_for(model)
         self._client = None
         self.last_usage: dict[str, int] = {}
         self._last_error: str | None = None
         if not api_key:
-            self._last_error = "no ANTHROPIC_API_KEY set"
+            self._last_error = f"no {ENV_KEY_FOR_PROVIDER[self.provider]} set"
             return
         try:
-            import anthropic
+            if self.provider == "openai":
+                import openai
 
-            self._client = anthropic.Anthropic(api_key=api_key)
+                self._client = openai.OpenAI(api_key=api_key)
+            else:
+                import anthropic
+
+                self._client = anthropic.Anthropic(api_key=api_key)
         except Exception as exc:  # pragma: no cover - import/credential issues
-            self._last_error = f"anthropic client unavailable: {exc}"
+            self._last_error = f"{self.provider} client unavailable: {exc}"
             LOGGER.warning("LLM disabled: %s", self._last_error)
 
     # ------------------------------------------------------------------
@@ -59,7 +92,7 @@ class LLM:
     @property
     def status(self) -> str:
         if self.available:
-            return f"enabled ({self.model})"
+            return f"enabled ({self.provider}: {self.model})"
         return f"disabled ({self._last_error})"
 
     # ------------------------------------------------------------------
@@ -92,32 +125,20 @@ class LLM:
         Sampling parameters are deliberately not sent. ``temperature``, ``top_p``
         and ``top_k`` were removed from the Messages API for the current model
         generation (Sonnet 5, Opus 5 and later); passing one is rejected outright,
-        which previously disabled every LLM step in the pipeline.
+        which previously disabled every LLM step in the pipeline. The current
+        OpenAI reasoning models reject them for the same reason, so neither
+        branch below sends any.
         """
         if not self.available:
             raise LLMUnavailable(self._last_error or "LLM not configured")
 
+        call = self._call_openai if self.provider == "openai" else self._call_anthropic
+        budget = min(max_tokens, MAX_OUTPUT_TOKENS)
         last_exc: Exception | None = None
         for attempt in range(retries + 1):
             try:
-                kwargs: dict[str, Any] = {
-                    "model": self.model,
-                    "max_tokens": min(max_tokens, MAX_OUTPUT_TOKENS),
-                    "messages": [{"role": "user", "content": prompt}],
-                }
-                if system:
-                    kwargs["system"] = system
-                with self._client.messages.stream(**kwargs) as stream:
-                    message = stream.get_final_message()
-                # Thinking blocks are returned with their text omitted by
-                # default, so only the answer blocks are collected here.
-                text = "".join(
-                    block.text for block in message.content if getattr(block, "type", "") == "text"
-                )
-                stop_reason = str(getattr(message, "stop_reason", "") or "")
+                text, stop_reason = call(prompt, system, budget)
                 if text.strip():
-                    usage = getattr(message, "usage", None)
-                    self.last_usage = {key: int(getattr(usage, key, 0) or 0) for key in ("input_tokens", "output_tokens")}
                     return text.strip(), stop_reason
                 last_exc = RuntimeError(
                     "empty response"
@@ -130,6 +151,60 @@ class LLM:
                 if attempt < retries:
                     time.sleep(1.5 * (attempt + 1))
         raise LLMUnavailable(str(last_exc))
+
+    # ------------------------------------------------------------------
+    def _call_anthropic(self, prompt: str, system: str, max_tokens: int) -> tuple[str, str]:
+        """One Messages API call, returning the text and the stop reason."""
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system:
+            kwargs["system"] = system
+        with self._client.messages.stream(**kwargs) as stream:
+            message = stream.get_final_message()
+        # Thinking blocks are returned with their text omitted by default, so
+        # only the answer blocks are collected here.
+        text = "".join(
+            block.text for block in message.content if getattr(block, "type", "") == "text"
+        )
+        usage = getattr(message, "usage", None)
+        self.last_usage = {
+            key: int(getattr(usage, key, 0) or 0) for key in ("input_tokens", "output_tokens")
+        }
+        return text, str(getattr(message, "stop_reason", "") or "")
+
+    def _call_openai(self, prompt: str, system: str, max_tokens: int) -> tuple[str, str]:
+        """One Responses API call, returning the text and the stop reason.
+
+        The Responses API is used rather than chat completions because it is
+        what the current reasoning models are served on, and because it reports
+        a cut-off answer explicitly. That signal is normalised onto Anthropic's
+        spelling, ``max_tokens``, so :meth:`complete_json` has one stop reason
+        to test rather than one per vendor.
+        """
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "input": prompt,
+            "max_output_tokens": max_tokens,
+        }
+        if system:
+            kwargs["instructions"] = system
+        with self._client.responses.stream(**kwargs) as stream:
+            response = stream.get_final_response()
+        # Reasoning items carry no text of their own, and output_text already
+        # concatenates only the answer, which mirrors the Anthropic branch.
+        text = str(getattr(response, "output_text", "") or "")
+        usage = getattr(response, "usage", None)
+        self.last_usage = {
+            key: int(getattr(usage, key, 0) or 0) for key in ("input_tokens", "output_tokens")
+        }
+        reason = str(getattr(getattr(response, "incomplete_details", None), "reason", "") or "")
+        status = str(getattr(response, "status", "") or "")
+        if reason.startswith("max_") or (status == "incomplete" and not reason):
+            return text, "max_tokens"
+        return text, reason or "end_turn"
 
     # ------------------------------------------------------------------
     def complete_json(

@@ -35,14 +35,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="path to a .json, .sql, .sqlite, .csv or .xlsx file, or a folder of them",
     )
     source.add_argument("--olx", action="store_true", help="collect OLX listings and write an Uzbek PDF/Word bulletin")
-    source.add_argument("--olx-pages", type=int, default=5, help="pages per OLX category (1-100; default 5)")
+    source.add_argument("--olx-pages", type=int, default=None, metavar="N",
+                        help="stop after N pages per OLX category "
+                             "(default: every page the site serves)")
     source.add_argument("--olx-snapshot", help="regenerate the Uzbek bulletin from a saved OLX snapshot")
     source.add_argument("--olx-browser", action="store_true",
                         help="collect through a real browser (needed: plain HTTP is refused with 403)")
     source.add_argument("--olx-show-browser", action="store_true",
                         help="with --olx-browser, show the browser window instead of running it hidden")
-    source.add_argument("--uybor-pages", type=int, default=0, metavar="N",
-                        help="also collect N pages of up to 100 Uybor.uz listings (0 = skip)")
+    source.add_argument("--uybor-pages", type=int, default=None, metavar="N",
+                        help="stop after N pages of up to 100 Uybor.uz listings "
+                             "(default: every page; 0 = skip Uybor)")
+    source.add_argument("--no-uybor", action="store_true",
+                        help="collect OLX only, without Uybor.uz")
     source.add_argument("--olx-archive", metavar="DIR",
                         help="folder of archived OLX .db files, to add a historical price trend")
     source.add_argument("--olx-rebuild-history", action="store_true",
@@ -57,8 +62,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     behaviour = parser.add_argument_group("behaviour")
     behaviour.add_argument("--no-web", action="store_true", help="skip live web research")
-    behaviour.add_argument("--model", help="Anthropic model id, e.g. claude-opus-5")
-    behaviour.add_argument("--api-key", help="Anthropic API key (overrides .env)")
+    behaviour.add_argument("--model",
+                           help="Model id, e.g. claude-opus-5 or gpt-6-astra. The id picks "
+                                "the vendor, and therefore which API key is used.")
+    behaviour.add_argument("--api-key",
+                           help="API key for the chosen model's vendor (overrides .env)")
     behaviour.add_argument("--results", type=int, help="search results per query (default: 6)")
     behaviour.add_argument("--pages", type=int, help="pages to download per theme (default: 3)")
     behaviour.add_argument("--max-rows", type=int, metavar="N",
@@ -106,7 +114,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.model:
         settings.model = args.model
     if args.api_key:
-        settings.anthropic_api_key = args.api_key
+        # Assigned to whichever key the chosen model actually reads, so that one
+        # flag works for either vendor.
+        if settings.provider == "openai":
+            settings.openai_api_key = args.api_key
+        else:
+            settings.anthropic_api_key = args.api_key
     if args.results:
         settings.search_results_per_query = args.results
     if args.pages:
@@ -131,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
                              title=args.title, snapshot_path=args.olx_snapshot,
                              browser=args.olx_browser, headless=not args.olx_show_browser,
                              archive=args.olx_archive, rebuild_history=args.olx_rebuild_history,
-                             uybor_pages=args.uybor_pages)
+                             uybor_pages=0 if args.no_uybor else args.uybor_pages)
         except Exception as exc:
             print(f"OLX failed: {exc}", file=sys.stderr)
             if args.verbose:

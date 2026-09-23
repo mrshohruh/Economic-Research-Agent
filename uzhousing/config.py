@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .llm import ENV_KEY_FOR_PROVIDER, provider_for
+
 try:  # python-dotenv is optional at import time
     from dotenv import load_dotenv
 
@@ -46,6 +48,9 @@ class Settings:
     """Everything the pipeline needs to know about how to run."""
 
     anthropic_api_key: str = ""
+    openai_api_key: str = ""
+    # The model id also picks the vendor, and therefore which of the two keys
+    # above is used. See ``uzhousing.llm.provider_for``.
     model: str = "claude-opus-5"
     web_research: bool = True
     search_results_per_query: int = 6
@@ -65,6 +70,9 @@ class Settings:
     # more than a laptop can hold in memory at once. Rows above this budget are
     # thinned evenly across the source and the report says so. 0 means no cap.
     max_rows: int = 400_000
+    # Folder of archived OLX .db dumps for the quarterly history. Read one level
+    # only, so this names the folder holding the .db files, not a parent of it.
+    olx_archive: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -77,7 +85,14 @@ class Settings:
             lang = "en"
         return cls(
             anthropic_api_key=(os.getenv("ANTHROPIC_API_KEY", "") or "").strip(),
-            model=(os.getenv("ANTHROPIC_MODEL", "") or "claude-opus-5").strip(),
+            openai_api_key=(os.getenv("OPENAI_API_KEY", "") or "").strip(),
+            # MODEL is the vendor-neutral name; ANTHROPIC_MODEL is still read so
+            # that existing .env files keep working.
+            model=(
+                os.getenv("MODEL", "")
+                or os.getenv("ANTHROPIC_MODEL", "")
+                or "claude-opus-5"
+            ).strip(),
             web_research=_bool_env("WEB_RESEARCH", True),
             search_results_per_query=_int_env("SEARCH_RESULTS_PER_QUERY", 6),
             pages_to_read=_int_env("PAGES_TO_READ", 3),
@@ -85,12 +100,28 @@ class Settings:
             output_dir=out_path,
             uzs_per_usd=_float_env("UZS_PER_USD", 12_650.0),
             max_rows=max(0, _int_env("MAX_ROWS", 400_000)),
+            olx_archive=(os.getenv("OLX_ARCHIVE", "") or "").strip(),
         )
 
     # -- convenience ---------------------------------------------------
     @property
+    def provider(self) -> str:
+        """Which vendor the configured model belongs to."""
+        return provider_for(self.model)
+
+    @property
+    def llm_api_key(self) -> str:
+        """The key for whichever vendor the configured model belongs to."""
+        return self.openai_api_key if self.provider == "openai" else self.anthropic_api_key
+
+    @property
+    def llm_key_name(self) -> str:
+        """The environment variable that holds the key this model needs."""
+        return ENV_KEY_FOR_PROVIDER[self.provider]
+
+    @property
     def llm_enabled(self) -> bool:
-        return bool(self.anthropic_api_key)
+        return bool(self.llm_api_key)
 
     @property
     def figures_dir(self) -> Path:

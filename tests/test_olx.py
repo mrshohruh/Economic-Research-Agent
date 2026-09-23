@@ -4,12 +4,19 @@ from unittest.mock import Mock
 import pandas as pd
 import pytest
 from uzhousing.ingest.olx import collect, extract_offers, CollectionError, CATEGORIES
-from uzhousing.report.olx_bulletin import normalise, regional_table, sections, write
+from uzhousing.report.olx_bulletin import Tbl, normalise, regional_table, sections, write
 
 
-def table_of(content, title, index=0):
-    """The index-th table of the named section."""
-    return next(s for s in content if s.title == title).tables()[index]
+def table_of(content, caption, index=0):
+    """A table by a fragment of its caption, wherever the report put it.
+
+    Detail tables are moved to the appendix and numbered there, so a test asks
+    for the table by what it is rather than by the section it started in.
+    """
+    found = [frame for section in content for block in section.blocks
+             if isinstance(block, Tbl) and caption.lower() in block.caption.lower()
+             for frame in [block.frame]]
+    return found[index] if found else pd.DataFrame()
 
 
 def advert(i=1, category="rent_apartment", price=500, currency="USD", market="primary"):
@@ -79,7 +86,7 @@ def test_separate_rents_and_sales_and_fx():
     assert frame.loc[frame.listing_id == 500, 'price_usd'].iloc[0] == 500
     assert set(frame.kind) == {'sale','rent'}
     assert frame.loc[frame.listing_id == 500, 'market'].iloc[0] == 'Aniqlanmagan'
-    yield_table = table_of(sections(payload, frame), 'IJARA RENTABELLIGI (YILLIK)')
+    yield_table = table_of(sections(payload, frame), "yalpi ko'rsatkich")
     assert yield_table.iloc[0,-1] == 12.0
     assert regional_table(frame,'sale','Birlamchi').iloc[0,-1] == 12.5
 
@@ -109,7 +116,7 @@ def test_missing_rooms_and_area_do_not_crash():
         ad['params'] = [p for p in ad['params'] if p['key'] not in ('total_area','number_of_rooms')]
     frame = normalise(payload)
     assert frame.sqm_usd.isna().all()
-    assert table_of(sections(payload, frame), 'IJARA RENTABELLIGI (YILLIK)').empty
+    assert table_of(sections(payload, frame), "yalpi ko'rsatkich").empty
 
 
 def test_late_failure_does_not_save_partial_run(tmp_path):

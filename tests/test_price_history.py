@@ -6,7 +6,7 @@ import pytest
 
 from uzhousing.ingest.price_history import (
     REGION_UZ_FROM_RU, build_monthly, gap_months, live_month, national)
-from uzhousing.report.olx_bulletin import (Bullets, Text, annual_history,
+from uzhousing.report.olx_bulletin import (Bullets, Note, Text, annual_history,
                                             history_section)
 
 
@@ -19,6 +19,13 @@ def bullet_text(section):
         elif isinstance(block, Text):
             lines.append(block.text)
     return lines
+
+
+def section_text(section):
+    """Commentary plus the source and note callouts under the tables."""
+    return bullet_text(section) + [line for block in section.blocks
+                                   if isinstance(block, Note)
+                                   for line in block.paragraphs]
 
 
 def archive(tmp_path, name, rows):
@@ -148,14 +155,17 @@ def test_history_section_compares_across_the_most_recent_gap():
                         ("2025-09", 500, 1200), ("2026-09", 400, 1400)])
     section = history_section(series, {})
     joined = " ".join(bullet_text(section))
-    assert "2025-09" in joined and "1,200" in joined and "1,400" in joined
-    assert "+16.7%" in joined
+    assert "2025-09" in joined and "1 200" in joined and "1 400" in joined
+    # Uzbek prose writes the decimal with a comma and the word "foiz".
+    assert "+16,7 foiz" in joined
     assert section.tables() and not section.tables()[0].empty
 
 
 def test_history_section_warns_when_the_live_sample_is_tiny():
     series = series_of([("2025-09", 100_000, 1200), ("2026-09", 50, 1400)])
-    assert any("OGOHLANTIRISH" in text for text in bullet_text(history_section(series, {})))
+    said = section_text(history_section(series, {}))
+    assert any("50 ta e'londan" in text and "100 000 ta e'londan" in text
+               and "tarkib o'zgarishi" in text for text in said)
 
 
 def test_history_section_falls_back_without_an_archive():

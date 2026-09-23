@@ -12,10 +12,12 @@ import pytest
 from uzhousing.ingest import fx_history
 from uzhousing.ingest.price_history import (MIN_QUARTER_LISTINGS, build_series,
                                             canonical_district, canonical_region,
-                                            comparison_table, index_series,
-                                            quarter_label, region_label, thin_groups)
+                                            comparison_table, fixed_weights,
+                                            index_series, national, quarter_label,
+                                            region_label, thin_groups)
 from uzhousing.report import layout
-from uzhousing.report.olx_bulletin import Archive, index_section, movement_bullets
+from uzhousing.report.olx_bulletin import (Archive, Note, index_section,
+                                          movement_bullets)
 
 
 # ---------------------------------------------------------------------------
@@ -241,21 +243,27 @@ def test_quarter_labels_match_the_reference():
 # commentary is read off the table it describes
 # ---------------------------------------------------------------------------
 
-def test_commentary_counts_and_names_what_the_table_shows():
+def test_commentary_reads_the_table_rather_than_listing_it():
     table = pd.DataFrame({"Hudud": ["A", "B", "C"], "2025-Ch2": [10.0, 20.0, 30.0],
                           "Δ Ch2/Ch1": [1.0, 1.0, 1.0], "2025-Ch3": [9.0, 22.0, 27.0],
                           "Δ Ch3/Ch2": [-10.0, 10.0, -10.0]})
-    items = " ".join(movement_bullets(table, "mln so'm/m²"))
-    assert "3 ta hududdan **2 tasida narx pasaydi**, 1 tasida oshdi" in items
-    assert "**B** (+10.0%)" in items
-    assert "Eng arzon: **A**" in items and "eng qimmat: **C**" in items
+    items = movement_bullets(table, "mln so'm/m²")
+    joined = " ".join(items)
+    # Two or three findings, not one line per row of the table.
+    assert 2 <= len(items) <= 3
+    assert "2025-yil III choragida" in joined
+    assert "2 ta hududda" in joined and "**A** (-10,0 foiz)" in joined
+    # The spread is stated as a ratio, which is what the levels column means.
+    assert "barobar" in joined and "**C**" in joined
+    # Every figure is written the Uzbek way: comma decimal, the word "foiz".
+    assert "%" not in joined
 
 
 def test_commentary_says_so_when_nothing_is_comparable():
     table = pd.DataFrame({"Hudud": ["A"], "2025-Ch2": [float("nan")],
                           "Δ Ch2/Ch1": [float("nan")], "2025-Ch3": [float("nan")],
                           "Δ Ch3/Ch2": [float("nan")]})
-    assert "yetarli kuzatuvga ega" in " ".join(movement_bullets(table, "USD/m²"))
+    assert "hisoblanmadi" in " ".join(movement_bullets(table, "USD/m²"))
 
 
 # ---------------------------------------------------------------------------
@@ -273,13 +281,48 @@ def test_the_index_is_listing_weighted_not_a_plain_average():
     assert levels["median_usd_sqm"].iloc[0] == pytest.approx(1100)  # not 1500
 
 
+def test_the_index_holds_its_weights_fixed_against_a_shift_in_advert_volumes():
+    # Prices do not move; only the share of adverts coming from the expensive
+    # region does. A volume-weighted series would read that as a price rise.
+    frame = quarterly([("2025Q1", "Toshkent shahri", 100, 2000),
+                       ("2025Q1", "Buxoro Viloyati", 100, 500),
+                       ("2025Q2", "Toshkent shahri", 900, 2000),
+                       ("2025Q2", "Buxoro Viloyati", 100, 500)])
+    levels = index_series(frame)
+    assert levels.attrs["weighting"] == "fixed"
+    assert levels["index"].tolist() == [100.0, 100.0]
+    assert national(frame, "quarter")["median_usd_sqm"].iloc[-1] > 1250  # volume-weighted
+
+
+def test_a_region_seen_in_only_one_quarter_is_not_in_the_fixed_basket():
+    # A late arrival would otherwise enter the index as a price movement.
+    frame = quarterly([("2025Q1", "Toshkent shahri", 100, 2000),
+                       ("2025Q2", "Toshkent shahri", 100, 2000),
+                       ("2025Q2", "Navoiy Viloyati", 100, 400)])
+    weights = fixed_weights(frame)
+    assert list(weights.index.get_level_values("region_uz")) == ["Toshkent shahri"]
+    levels = index_series(frame)
+    assert levels["index"].tolist() == [100.0, 100.0]
+    # The basket covers half the adverts of the second quarter, and says so.
+    assert levels["coverage"].tolist() == [100.0, 50.0]
+
+
+def test_without_a_common_stratum_the_index_says_it_used_volume_weights():
+    frame = quarterly([("2025Q1", "Toshkent shahri", 100, 2000),
+                       ("2025Q2", "Navoiy Viloyati", 100, 400)])
+    levels = index_series(frame)
+    assert levels.attrs["weighting"] == "volume"
+
+
 def test_a_partly_observed_quarter_is_flagged_not_hidden():
     frame = quarterly([("2025Q1", "A", 100, 1000), ("2025Q2", "A", 100, 1100)])
     frame.loc[frame["quarter"] == pd.Period("2025Q2", "Q"), "months"] = 1
     section = index_section(Archive(pd.DataFrame(), frame, pd.DataFrame()))
-    text = " ".join(item for block in section.blocks
-                    if hasattr(block, "items") for item in block.items)
-    assert "2025-Ch2 (1 oy)" in text
+    text = " ".join([item for block in section.blocks
+                     if hasattr(block, "items") for item in block.items]
+                    + [line for block in section.blocks if isinstance(block, Note)
+                       for line in block.paragraphs])
+    assert "2025-yil II choragi (1 oy)" in text
 
 
 def test_without_an_archive_the_index_section_says_so():

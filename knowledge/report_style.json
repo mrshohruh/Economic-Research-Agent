@@ -1,0 +1,203 @@
+{
+  "_readme": [
+    "The house style of the Uzbek quarterly housing review, distilled from four",
+    "published issues: the UzMRC market and mortgage reviews for 2025-Q2, Q3 and Q4,",
+    "and the Central Bank's 2025 annual housing market analysis.",
+    "",
+    "This file carries STRUCTURE and GRAMMAR only. It deliberately carries no figure",
+    "from those reports: every example writes «X» where a number would stand and",
+    "«hudud» where a place would. A style exemplar that carried a real figure could",
+    "be copied into a report it does not belong to, and the writing step would then",
+    "fail its own numeric guard. Patterns are safe to imitate; other people's numbers",
+    "are not.",
+    "",
+    "Edit this file to change how the report reads. `uzhousing/report/house_style.py`",
+    "loads it and puts it in front of the model on every run."
+  ],
+
+  "register": {
+    "voice": "A market analyst at a mortgage refinancing company writing for policy readers, bank managers and journalists. Confident about what the data show, careful about what causes them.",
+    "person": "Impersonal. The report observes and records; it does not say 'we think'. 'kuzatildi', 'qayd etildi', 'ko'rsatmoqda'.",
+    "tense": "The quarter is reported in the past ('pasaydi', 'qayd etildi'); a standing trend is reported in the continuous ('davom etmoqda', 'kuzatilmoqda')."
+  },
+
+  "section_order": [
+    {"key": "summary", "title": "ASOSIY TAHLILIY XULOSALAR",
+     "note": "Numbered themes, each a bold lead-in plus two or three sentences. Added in the Q4 issue and worth keeping: a reader who stops here still leaves with the quarter."},
+    {"key": "primary", "title": "BIRLAMCHI UY-JOY BOZORI"},
+    {"key": "secondary", "title": "IKKILAMCHI UY-JOY BOZORI"},
+    {"key": "construction", "title": "UY-JOY QURILISHI"},
+    {"key": "index", "title": "UY-JOY INDEKSI"},
+    {"key": "rent", "title": "IJARA BOZORI"},
+    {"key": "yield", "title": "IJARA RENTABELLIGI (YILLIK)"},
+    {"key": "mortgage", "title": "IPOTEKA BOZORI"},
+    {"key": "products", "title": "IPOTEKA KREDITI MAHSULOTLARI BO'YICHA MA'LUMOT"},
+    {"key": "experts", "title": "EKSPERTLAR FIKRI"}
+  ],
+
+  "market_section_shape": [
+    "A regional table: the previous quarter's level, its change, this quarter's level, its change.",
+    "A Tashkent district table in the same shape.",
+    "Two to four commentary bullets beside the table, never a walk down its rows.",
+    "One 'Manba' callout stating the source, the scraping method, the listing counts behind a median and the quarter-end USD/UZS rate the som figures were priced at.",
+    "One 'Eslatma' line: asking prices may differ from transaction prices."
+  ],
+
+  "paragraph_grammar": [
+    {
+      "id": "opening",
+      "purpose": "What the quarter did, across places, in one sentence.",
+      "pattern": "«davr» O'zbekiston «segment» bozorida hududlar kesimida asosan narxlarning «yo'nalish»i kuzatildi.",
+      "notes": "Always names the period, the segment and the cross-section. 'asosan' carries the fact that it was not universal."
+    },
+    {
+      "id": "continuity",
+      "purpose": "Tie this quarter to the last one. The reference never reports a quarter in isolation.",
+      "pattern": "Joriy yilning «oldingi chorak»ida «teskari yo'nalish» qayd etilgan hududlarda «chorak»ka kelib biroz «yo'nalish» yuz berdi.",
+      "alternatives": [
+        "«hudud»da ketma-ket ikkinchi chorakda ham narxlar «yo'nalish»i kuzatildi.",
+        "poytaxtda yil boshidan buyon davom etayotgan tushish sur'ati «chorak»ka kelib biroz sekinlashdi."
+      ]
+    },
+    {
+      "id": "leaders",
+      "purpose": "Who carried the move. Named places, each with its own figure.",
+      "pattern": "Eng yuqori narx «yo'nalish»i «hudud» (X foiz), «hudud» (X foiz) va «hudud» (X foiz) hududlarida qayd etildi.",
+      "notes": "Two to four names, never more. The figure sits in brackets beside the name it belongs to."
+    },
+    {
+      "id": "counter_movement",
+      "purpose": "What moved against the tide. A quarter is never all one way, and saying so is what makes the main finding credible.",
+      "pattern": "Bozordagi narxlar «yo'nalish»i fonida, ayrim hududlarda, aksincha, narxlarning biroz «teskari yo'nalish»i ham kuzatildi. Eng yuqori «teskari yo'nalish» «hudud» (X foiz) va «hudud» (X foiz) viloyatlarida qayd etildi."
+    },
+    {
+      "id": "band",
+      "purpose": "Where everything else sat, so the reader can size the move without reading the table.",
+      "pattern": "Qolgan hududlarda esa o'zgarish sur'atlari X-X foiz oralig'ida bo'ldi.",
+      "alternatives": [
+        "Boshqa tumanlarda esa pasayish sur'ati X foizdan pastroq bo'ldi.",
+        "Qolgan tumanlarda esa ijara narxlari o'sishi X-X foiz atrofida bo'ldi."
+      ],
+      "notes": "This is the sentence that replaces any statement about the middle of a column of changes. A range a reader can picture; never 'the median of the regional changes'."
+    },
+    {
+      "id": "levels",
+      "purpose": "Where the market is dear and where it is cheap, in levels rather than changes.",
+      "pattern": "Narxlar bo'yicha eng arzon «joy» («X million so'm»), eng qimmat «joy»lar «joy» («X million so'm») va «joy» («X million so'm») bo'lib qolmoqda."
+    },
+    {
+      "id": "explanation",
+      "purpose": "Why. Always a separate paragraph, always hedged, always naming a channel.",
+      "pattern": "«Kuzatilgan harakat»ni «mexanizm» bilan izohlash mumkin.",
+      "notes": "See causal_channels. The explanation paragraph comes after the description, never instead of it."
+    }
+  ],
+
+  "causal_channels": [
+    {
+      "key": "natural_correction",
+      "name_uz": "tabiiy korreksiya",
+      "mechanism": "A market that rose steeply in 2020-2023 giving some of it back; prices returning to what incomes support.",
+      "phrasing": "«hudud»da kuzatilayotgan narxlarning qisman pasayishini «avvalgi davr»da qayd etilgan yuqori o'sish sur'atlarining «tabiiy korreksiya»si sifatida izohlash mumkin.",
+      "needs": "A documented earlier run-up in the same series or segment. Take the years of that run-up from the evidence; never write them from the corpus.",
+      "certainty": "hypothesis"
+    },
+    {
+      "key": "fx_translation",
+      "name_uz": "valyuta kursi",
+      "mechanism": "Listings are posted in US dollars. When the som strengthens against the dollar, the som price falls even though the dollar price did not move. Arithmetic, not a hypothesis.",
+      "phrasing": "Yurtimizda uy-joy bozoridagi e'lonlar odatda AQSH dollarida joylashtiriladi. «davr» yakuniga ko'ra milliy valyuta AQSH dollariga nisbatan X foizga mustahkamlandi. Bu jarayon narxlarning dollar qiymatida oshishiga qaramasdan, milliy valyutada biroz arzonlashiga o'z ta'sirini ko'rsatgan.",
+      "needs": "The quarter-end official rate at both ends of the comparison.",
+      "certainty": "arithmetic"
+    },
+    {
+      "key": "supply_saturation",
+      "name_uz": "taklif hajmining kengayishi",
+      "mechanism": "Large-scale construction in the capital and large cities fills the market with new housing; the primary-market surplus passes into the secondary market and steadies prices.",
+      "phrasing": "So'nggi yillarda, xususan, poytaxt va yirik shaharlarda amalga oshirilgan keng ko'lamli qurilish ishlari natijasida bozor yangi uy-joylar bilan to'yinishda davom etmoqda. Bu o'z navbatida ikkilamchi bozorga ham ta'sir ko'rsatib, taklif hajmini oshirmoqda.",
+      "needs": "Completions or construction-volume figures for the period.",
+      "certainty": "hypothesis"
+    },
+    {
+      "key": "regional_convergence",
+      "name_uz": "hududlararo narx tafovutining qisqarishi",
+      "mechanism": "Growth concentrated in the regions whose prices are lowest, narrowing the gap with the capital. Testable directly: are the rising places the cheap ones?",
+      "phrasing": "Bu o'sish Respublikaning yirik markazlariga qaraganda uy-joy narxlari past bo'lgan hududlarda kuzatilmoqda, bu esa hududlar bilan narx tafovutining qisqarayotganidan dalolat beradi.",
+      "needs": "The report's own cross-section: the rank correlation between a region's price level and its change.",
+      "certainty": "testable"
+    },
+    {
+      "key": "demand_saturation",
+      "name_uz": "talabning vaqtinchalik to'yinishi",
+      "mechanism": "Demand brought forward in earlier quarters leaving a thinner pipeline, so prices correct.",
+      "phrasing": "«hudud»dagi pasayish talabning vaqtinchalik to'yingani natijasidagi korreksiya bo'lishi mumkin.",
+      "needs": "A run of strong quarters immediately before the fall.",
+      "certainty": "hypothesis"
+    },
+    {
+      "key": "state_programme",
+      "name_uz": "davlat ipoteka dasturlari",
+      "mechanism": "Subsidised mortgage on the primary market moves demand toward new build and away from the secondary market; the volume disbursed sets how hard it pushes.",
+      "phrasing": "Birlamchi bozordagi ipoteka hajmining sezilarli o'sishini imtiyozli kredit shartlari va xaridorlarning yangi, zamonaviy uy-joyga bo'lgan talabi ortib borayotgani bilan izohlash mumkin.",
+      "needs": "Disbursement volumes or a decree changing the terms.",
+      "certainty": "hypothesis"
+    },
+    {
+      "key": "affordability",
+      "name_uz": "aholi xarid qobiliyati",
+      "mechanism": "Wages and incomes rising faster than house prices, so the same dwelling costs fewer months of pay.",
+      "phrasing": "O'rtacha oylik ish haqi va aholi jon boshiga daromadlarning uy-joy narxlariga nisbatan yuqoriroq o'sishi aholining xarid qobiliyatiga ijobiy ta'sir ko'rsatgan.",
+      "needs": "Wage or income growth for the period, against the price change.",
+      "certainty": "hypothesis"
+    },
+    {
+      "key": "demography",
+      "name_uz": "demografik o'sish",
+      "mechanism": "Annual population growth and new family formation running well ahead of completions, keeping a floor under demand.",
+      "phrasing": "Yillik demografik o'sish va yangi tashkil etilayotgan oilalar soni qurib bitkazilgan xonadonlar sonidan yuqori bo'lib qolmoqda, bu esa uy-joyga bo'lgan real talabni ushlab turmoqda.",
+      "needs": "Population or marriage figures against completions.",
+      "certainty": "hypothesis"
+    },
+    {
+      "key": "credit_terms",
+      "name_uz": "kredit shartlari",
+      "mechanism": "Policy rate, mortgage rates, LTV and down-payment requirements setting how much house a given income can buy.",
+      "phrasing": "Ipoteka kreditlari bo'yicha o'rtacha tortilgan foiz stavkalarining pasayishi resurs xarajatlari kamayishi yoki banklararo raqobat kuchayishi bilan izohlanishi mumkin.",
+      "needs": "Rate or regulatory figures for the period.",
+      "certainty": "hypothesis"
+    },
+    {
+      "key": "seasonal",
+      "name_uz": "mavsumiy talab",
+      "mechanism": "Rents move on their own calendar: term times, seasonal labour migration and tourism. Evidence about sale prices is not evidence about rents.",
+      "phrasing": "Ijara narxlarining chorakma-chorak harakati o'quv yili va mavsumiy migratsiya bilan bog'liq bo'lishi mumkin; bu omil sotuv narxlariga bir xil ta'sir qilmaydi.",
+      "needs": "The quarter's position in the academic or agricultural year.",
+      "certainty": "hypothesis"
+    }
+  ],
+
+  "hedges": {
+    "_note": "How the reference marks the strength of a claim. The grammar is the flag: a reader can tell a measured fact from an interpretation by the verb alone. Never state a cause with a bare 'chunki'.",
+    "arithmetic": ["...o'z ta'sirini ko'rsatgan", "...hisobiga to'g'ri keladi", "...tashkil etdi"],
+    "documented": ["...natijasida", "...tufayli", "...hisoblanadi", "...dalolat beradi"],
+    "hypothesis": ["...bilan izohlash mumkin", "...bo'lishi mumkin", "...bilan bog'liq bo'lishi mumkin", "...izohlanishi mumkin", "...ehtimoli mavjud"],
+    "framing": ["E'tiborli jihati shundaki,", "Ta'kidlash joizki,", "Shu bilan birga,", "Aksincha,", "Ayni paytda,", "Xususan,"]
+  },
+
+  "thesis_sentences": {
+    "_note": "The Central Bank analysis opens each analytical block with a bold claim sentence, then spends the block evidencing it. A strong device: the reader gets the finding before the arithmetic.",
+    "examples": [
+      "Uy-joy taklifining sezilarli o'sishi aholining tanlov imkoniyatlarini oshirgan.",
+      "Aholi xarid qobiliyatining oshishi fonida uy-joy sotib olish imkoniyatlari yaxshilangan.",
+      "Demografik o'sish tufayli uy-joyga bo'lgan talab dinamikasi barqaror oshish trendida davom etmoqda."
+    ]
+  },
+
+  "forbidden": [
+    "Describing the shape of the table instead of the market: the middle of a column of changes names no place and no price.",
+    "A cause asserted with no channel between the force and the price.",
+    "A hypothesis written in the grammar of a documented fact.",
+    "Walking down the rows of a table in prose when the table is printed beside it.",
+    "Carrying a figure from a published report into a report built on different data."
+  ]
+}

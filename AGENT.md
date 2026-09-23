@@ -31,8 +31,8 @@ never assumes a fixed schema.
 
 | Setting | Value | Where |
 |---|---|---|
-| Model | `claude-opus-5` (override with `ANTHROPIC_MODEL` or `--model`) | [config.py:49](uzhousing/config.py#L49) |
-| API key | `ANTHROPIC_API_KEY`; the pipeline runs end to end without one | [config.py:48](uzhousing/config.py#L48) |
+| Model | `claude-opus-5` (override with `MODEL` or `--model`); the id also picks the vendor | [config.py](uzhousing/config.py), [llm.py](uzhousing/llm.py) |
+| API key | `ANTHROPIC_API_KEY` for `claude-*`, `OPENAI_API_KEY` for `gpt-*`; the pipeline runs end to end without one | [config.py](uzhousing/config.py) |
 | Web research | on by default, `--no-web` to disable | [config.py:50](uzhousing/config.py#L50) |
 | Report language | `en` \| `ru` \| `uz` | [config.py:19](uzhousing/config.py#L19) |
 | Row budget | 400,000, evenly thinned above that; `--max-rows 0` for all | [config.py:67](uzhousing/config.py#L67) |
@@ -203,6 +203,21 @@ Implemented in the system prompts at [narrative.py:23](uzhousing/report/narrativ
 - Every figure ships with its numbers, so nothing depends on reading a colour correctly.
 - Charts use a colour-vision-deficiency-validated palette in fixed slot order.
 - Every attribution is labelled as statistical evidence, documented policy, or judgement.
+- Each analytical section carries one chart rather than another raw table; detail tables sit in a
+  numbered appendix the section points at.
+- Repeat a caveat only where it changes how a specific figure is read. Everything that governs the
+  whole report stands once, in the methodology box.
+- Do not narrate a table. Two or three findings per section, each saying what the movement means;
+  the reader has the remaining values in front of them.
+- Write figures the Uzbek way in prose — `3,4 foiz`, `20,37 mln so'm`, `2026-yil II chorak` — and
+  keep `+3.4%`, `Δ` and other compact notation for table cells.
+- Name the metric, not its level, and name it in words a non-specialist reads: "har bir kvadrat
+  metr uchun so'ralayotgan o'rta narx", not "median taklif narxi (mln so'm/m²)".
+- No notation inside a sentence — no `mln so'm/m²`, no `%`, no `Δ`, no formulas. Units are spelled
+  out in prose and kept compact only in table headings and axis labels. A technical term that
+  cannot be avoided is explained in the same sentence; a median is never called an average.
+- Vary sentence structure between sections. The same opening twice is an editorial fault, and the
+  editorial pass reports it.
 
 ---
 
@@ -255,6 +270,15 @@ Collection reads structured JSON from undocumented website interfaces. HTTP
 401/403/429, a challenge page, missing structured data and robots exclusions stop
 the run. Never bypass access controls or substitute invented listings.
 
+Every run audits the pooled cross-section before a table is built
+(`analysis/quality.py`): unrecognised place names, the same dwelling advertised
+on both sites, repeats within one site, impossible room counts, prices per m²
+outside their category's plausible band or far into their own group's log tail,
+and gross yields outside 1–25 %. An impossible value loses its per-m² figure and
+keeps its row; a cross-source duplicate is counted once; a repost inside one
+site is reported and kept. Every screen prints its count and its decision in a
+section of its own and in the run log, so nothing is removed silently.
+
 Dated snapshots are saved under outputs/olx_snapshots. The collector reads the
 CBU dated USD rate, saves source coverage, and excludes seller contacts/photos.
 The separate Uzbek Latin bulletin emits PDF and Word with primary/secondary
@@ -286,6 +310,16 @@ coloured changes, so the two formats read as one report.
 Sections build from typed blocks — text, bullets, table, chart, callout — rather
 than a fixed tuple, so a section can carry a quarterly table, a snapshot table
 and two callouts without the renderer knowing what any of them mean.
+
+Each analytical section carries one chart that makes its point — the breadth of
+a quarter's move, the dispersion of rents, the yield spread, the index against
+its inflation-adjusted path — and the table it was drawn from moves to a
+numbered appendix (`A1`, `A2`, …) that the section's note points at. Figures are
+numbered in the order the reader meets them. A caption travels with its figure
+or its table so neither is stranded at the foot of a page, a section with
+nothing to show is dropped rather than printed as a heading on a blank page, and
+the note explaining how to read a detail table is printed once at the head of
+the appendix instead of under every table in it.
 
 Region and district names are folded onto one spelling per place before anything
 is pooled. The three sources disagree on alphabet (Cyrillic, Latin Uzbek, and a
@@ -326,9 +360,35 @@ quarter's rate. The index is built on dollars while the levels are in so'm, so
 the section states both movements and attributes the difference to the exchange
 rate.
 
-Housing completions, mortgage volumes, average rates and bank product terms —
-whole sections of the reference — are not in listing data. They are named as
-unavailable, with what would be needed to produce them, and are never filled in.
+The index holds its weights fixed. Each quarter brings a different number of
+adverts from each region and segment, and weighting a quarter by its own volumes
+turns a change in what was advertised into what looks like a change in price: in
+a test where no price moves and only the capital's share of adverts rises,
+volume weighting reports a 48 % increase and fixed weights report none. A
+stratum is a region and a market segment; its weight is its share of adverts
+over the whole period, and only strata observed in every quarter are carried, so
+each quarter prices the same basket. The share of the market that basket covers
+is printed beside the index. Where no stratum spans every quarter — a short
+archive, or a region arriving late — the series falls back to volume weights and
+the note says so.
+
+Real and nominal are separated. The so'm series is drawn against itself deflated
+by official annual consumer-price inflation, so the section can say whether
+housing outran the price level or kept pace with it. Only the so'm series is
+deflated: a dollar-linked asking price never carried domestic inflation, so
+deflating it by the Uzbek CPI would subtract something it does not contain.
+Annual inflation is spread evenly across its four quarters, and the years whose
+rate is not yet published take the last published one — both approximations are
+named in the sentence that uses them.
+
+Housing completions, mortgage volumes, average rates, incomes and population are
+not in listing data. They are taken from official statistics instead of being
+declared unavailable (`research/official.py`): the World Bank's open API for the
+series it carries, dated and cited, and `knowledge/official_indicators.json` for
+the ones only Uzbek institutions publish, each entry naming the publication that
+carries it. A value filled in there enters the table with its own citation; one
+left empty is reported as a named source to consult, never as a blank. No figure
+is estimated, and an offline run reports what is cached.
 
 
 ### Historical price trends from an archive
@@ -371,10 +431,10 @@ price.
 
 ### Second source: Uybor.uz
 
-`--uybor-pages N` also collects up to N pages of 100 residential listings from
-Uybor.uz, whose public JSON API the site's own pages call:
-
-`run.py --olx --uybor-pages N` adds it.
+Residential listings from Uybor.uz are collected alongside OLX by default,
+through the public JSON API the site's own pages call. Every page of up to 100
+listings is read until the API runs out; `--uybor-pages N` stops after N of
+them, and `run.py --olx --no-uybor` skips the source.
 
 Unlike OLX it is reachable over plain HTTP, so no browser is needed for it.
 `uybor.uz/robots.txt` disallows only `/admin/`, `/cgi-bin/` and `/tmp/`, and is
@@ -425,7 +485,20 @@ OLX validates the paging offset and refuses anything beyond 1000 with HTTP 400,
 so a category yields at most about 1,040 listings however many pages are asked
 for. Reaching that ceiling is a normal stop, recorded as `depth_limit` in
 `coverage[].stop`, not a failure: the pages already collected are kept and the
-report is still written. `--olx-pages` above roughly 26 therefore adds nothing.
+report is still written. That limit is on the query, not on the category: a
+narrower query gets its own window. A run with no page limit — the default —
+therefore reads each category as many narrower queries, splitting by region,
+then city, then district, then halved price bands. Whether a query needs
+splitting is decided by asking the listing endpoint for the last page its
+window reaches: a full page means listings remain past it. The site's search
+metadata would answer that in one number, but robots.txt disallows
+`*/api/v1/offers/metadata/`, so it is never requested — and because no other
+endpoint publishes an unclamped total, the snapshot reports what was collected
+rather than a share of a site-wide figure. See `uzhousing/ingest/
+olx_partition.py` and `uzhousing/ingest/olx_geo.py`. A part still too large
+after every split is recorded under `coverage[].unreachable` rather than
+silently truncated. `--olx-pages N` keeps the old single-query behaviour as a
+fast partial run.
 A mid-run 401/403/429 still stops the run, and is never mistaken for the cap.
 
 Successful collections retain the same JSON snapshot format for the report and
@@ -443,6 +516,122 @@ This update changes data collection/storage only. Report templates, calculations
 language, layout and the existing synthetic sample are unchanged.
 
 
+### The house style, learned from the published reviews
+
+Four published issues were read to build `knowledge/report_style.json`: the UzMRC
+housing and mortgage reviews for 2025 Q2, Q3 and Q4, and the Central Bank's 2025
+annual housing market analysis. What was taken from them is how they are written
+— the order a finding is delivered in (what the quarter did, how it relates to
+the last one, who carried it, what moved against it, where everything else sat,
+what it means), the way a place is named beside its own figure, and the hedging
+grammar that tells a reader at a glance whether a sentence is measured or
+interpreted: `...tufayli` for a documented cause, `...bilan izohlash mumkin` for
+a hypothesis, `...o'z ta'sirini ko'rsatgan` for arithmetic.
+
+What was deliberately not taken is their numbers. Every exemplar writes `«X»`
+where a figure would stand and `«hudud»` where a place name would, and
+`tests/test_house_style.py` fails the build if a digit appears in one. This is
+not only good manners: the writing step rejects any digit it cannot trace to
+this report's own evidence, so a borrowed figure would fail the run rather than
+reach the page. `report/house_style.py` loads the corpus on every run and puts
+it in front of the model, so editing the JSON changes the next report without a
+code change; a missing or broken corpus costs the guidance and nothing else.
+
+The corpus also records the causal repertoire these analysts actually use —
+`tabiiy korreksiya`, the exchange rate, supply saturation, regional convergence,
+demand saturation, state mortgage programmes, affordability, demography, credit
+terms, seasonal rental demand — each with the mechanism it travels by, the
+evidence it needs, and whether it may be written as arithmetic, as a testable
+claim or only as a hypothesis. `report/drivers.py` carries the same list in
+Uzbek for the page.
+
+Two of those explanations the report now makes from its own inputs rather than
+repeating on faith:
+
+**The exchange rate** (`_fx_effect`). Uzbek listings are posted in dollars, so a
+som price can fall in a quarter when nothing about the market changed. Every
+published issue says so, and the report now leads its market sections with the
+same statement, computed from the dated quarter-end rates it already holds. The
+figure quoted is the pass-through to a som price — the change in the rate itself
+— not the som's appreciation against the dollar. The two are reciprocals, and
+quoting one while claiming the other puts a wrong number on a correct sentence.
+
+**Regional convergence** (`_convergence_line`). The reviews claim every issue
+that growth sits where prices are lowest, so the gap with the capital is
+closing. That is a claim about a cross-section this report already computes, so
+it is checked rather than asserted: rank the regions by level and by change and
+see whether they run against each other. A quarter where the pattern holds, one
+where it reverses and one where there is no pattern each get their own sentence,
+and "no stable relationship this quarter" is reported as the finding it is.
+
+### Why the quarter moved — policy and news research
+
+The tables say what happened to asking prices. They cannot say why, because an
+advert carries no reason, and a quarterly review that never answers the question
+is half a review. So the `--olx` run makes a second pass over a second body of
+evidence before it writes: decrees and state programmes, Central Bank decisions,
+construction and mortgage statistics and the reporting around them, searched for
+the quarter the data covers (`uzhousing/research/websearch.py`,
+`knowledge.py`) and read by the model (`research/context.py`).
+
+The research is pointed at *this* quarter rather than at the market in general.
+`_movement_brief()` hands the model what the tables found — how many regions
+fell, which fell hardest, which rose — and asks what over that window would move
+asking prices that way. What comes back is a ranked list of price drivers, each
+carrying the channel it travels by (mortgage terms, completions, the exchange
+rate, household income, seasonal demand, a state programme), the direction it
+pushes, and how far the evidence goes: `documented` where a source states the
+measure, `likely` where the mechanism is established but this quarter's evidence
+is indirect, `speculative` where it is a reasonable guess. A force with no route
+to the price is a coincidence, not an explanation, so a driver without a channel
+is not printed as one.
+
+`report/drivers.py` prints that as its own section, "NARX O'ZGARISHLARINING
+SABABLARI", placed after the measured sections and before the method: the reader
+meets the movement first and the reasons for it second. The section carries the
+ranked drivers, a table of the measures in force over the window with their
+expected direction and confidence, and a note naming every source behind it with
+its URL. A documented measure and a guess never read alike on the page.
+
+Two failure modes are written out rather than papered over. With `WEB_RESEARCH`
+off, or with no network, the section says the question was not answered and how
+to answer it. With research that returned nothing usable, it says no reliable
+source was found and leaves the causes unexplained — an explanation without
+evidence adds nothing to the figure in the table. Neither costs the report: the
+research step is never fatal, and the tables print as before.
+
+The system prompt was changed to match. It previously forbade causal claims
+outright, which is why earlier bulletins stopped at "prices fell". It now
+requires an explanation where the evidence supports one, requires the channel to
+be named, and requires the confidence to be stated in the sentence itself and
+never upgraded: `...tufayli` for a documented measure, `...bilan bog'liq bo'lishi
+mumkin` for a hypothesis, and a plain statement that the reason is not
+established where nothing reaches it. Attributing a cause to a source that did
+not state it, or carrying a driver into a segment the evidence did not place it
+in, is still forbidden. The advert data remain descriptive and never identify a
+cause on their own.
+
+Policy dates are masked whole, as quarters already were: `2025-yil 27-martda` is
+one reference, because a year and a day masked separately can be recombined into
+a date no source stated.
+
+### How a movement is described
+
+A movement is told through places and sizes, never through the shape of the
+table. An earlier bulletin printed "hududiy o'zgarishlar qatorining o'rtasidagi
+ko'rsatkich +0,5 foiz bo'ldi" — the middle of the row of regional changes — which
+names no region, no price and nothing a household could act on. The reference
+review never writes that way: it says how many places moved, names the ones that
+moved most with their own figures, and gives the band the rest sat in.
+
+So `_movement_opening()` reports the count, the named leaders and a quarter-to-
+three-quarter band (`_band()`, "2,1 dan 4,6 foizgacha"); `_spread_line()` names
+the mid-priced region instead of describing a position in a sorted column; and
+`_segment_summary()` leads with the single largest move and the region carrying
+it. `editorial.BANNED` refuses the abstraction if the writing step reintroduces
+it, and the system prompt says the same thing in words. `tests/test_drivers.py`
+holds both halves.
+
 ### Claude analysis in the OLX/Uybor bulletin
 
 The normal `--olx` / `--olx-snapshot` workflow now requires
@@ -452,11 +641,30 @@ section titles/order, text-block and bullet counts, tables, charts and renderers
 are preserved. Prose length can change pagination. Source notes and methodology
 remain deterministic, with the authorship statement updated to identify Claude.
 
+Section prose is split by purpose. The bullet blocks carry findings only: the
+direction and breadth of a move, the places behind it, the levels and the
+comparisons that can be read off the table above them. Coverage, sample
+thresholds, breaks in the series, partly observed periods and source differences
+sit in the `Manba` / `Eslatma` / `Qamrov` callouts, which Claude is not asked to
+rewrite, so a caveat is stated once where it belongs rather than repeated as
+commentary. The system prompt forbids describing the dataset or the production of
+the report in the findings, and requires every masked figure to be cited one cell
+at a time, with its unit and its own region, period and segment.
+
 The model receives computed tables and limitations, not raw seller data. Numeric
 references resolve to exact supplied values; unknown references, literal new
 numbers, incomplete blocks and invalid output fail the run before report writing.
-These checks prevent new numeric literals but do not prove every interpretation;
-causal explanations must remain hypotheses and require review.
+Period phrases are masked whole, so a quarter's Roman numeral travels with its
+year and a numeral the model wrote for itself is refused. Masking is one pass
+over the text: a second pass would mask the digits inside a reference already
+inserted, and a model copying the inner reference then prints a literal `[[F46]]`
+on the page. A paragraph that still carries any fragment of a reference after
+decoding fails the run rather than being printed.
+These checks prevent new numeric literals but do not prove every interpretation.
+A causal explanation is now written where the research section supports one, but
+it carries its own evidence flag and its source, and it still requires review: a
+retrieved source can be wrong, and a documented measure coinciding with a price
+move is not proof that it caused it.
 
 No silent template fallback is used in the CLI/app OLX workflow. Missing keys or
 API failures produce an error. Low-level `write(..., llm=None)` remains available

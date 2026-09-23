@@ -12,7 +12,13 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 from .olx_client import BASE, OLXClient, CollectionError, OfferUnavailable
+from .olx_partition import iter_category
 from .olx_store import save_observations
+#: A run with no page limit still cannot loop forever: this is the last page
+#: number any category will be asked for, far beyond the offset cap the
+#: marketplace itself enforces.
+PAGE_CEILING = 1000
+
 CATEGORIES = {
     "rent_apartment": "/nedvizhimost/kvartiry/arenda-dolgosrochnaya/",
     "sale_apartment": "/nedvizhimost/kvartiry/prodazha/",
@@ -58,18 +64,26 @@ def extract_offers(html: str) -> list[dict]:
     return list(found.values())
 
 
-def collect(output_dir: Path, *, pages: int = 5, session=None, browser: bool = False,
+def collect(output_dir: Path, *, pages: int | None = None, session=None, browser: bool = False,
             headless: bool = True, pause=time.sleep, progress=print,
-            uybor_pages: int = 0) -> Path:
-    """Collect the bounded category pages.
+            uybor_pages: int | None = 0) -> Path:
+    """Collect the category pages, by default every page the site will serve.
+
+    ``pages=None`` walks each category until the marketplace stops offering new
+    listings — a page repeats, comes back short, or the offset cap is reached —
+    instead of stopping at a number chosen in advance. Passing an integer keeps
+    the old behaviour of reading at most that many pages per category.
 
     ``browser=True`` routes every request through a real browser instead of a
     plain HTTP session, which is the only transport the site's CDN firewall
     currently serves. Nothing else about collection changes: the same robots.txt
     rules, pacing, schema checks and snapshot format apply either way.
     """
-    if not 1 <= pages <= 100:
-        raise ValueError("OLX pages must be between 1 and 100 per category")
+    if pages is not None and (not isinstance(pages, int) or isinstance(pages, bool)
+                              or not 1 <= pages <= PAGE_CEILING):
+        raise ValueError(
+            f"OLX pages must be between 1 and {PAGE_CEILING} per category, "
+            "or None for every page")
     owned = None
     if session is None and browser:
         from .olx_browser import BrowserSession
@@ -130,11 +144,15 @@ def _verified_category_id(client, card_ids, *, agreeing=2, sample=3):
     return None, unavailable, fetched
 
 
-def _collect(output_dir, *, pages, client, progress, uybor_pages=0, pause=time.sleep):
-    stamp = datetime.now(timezone.utc)
-    records, coverage = [], []
-    # Check current robots rules, including wildcard paths used by OLX.
-    robots = client.get("/robots.txt").text
+def robots_checker(robots: str):
+    """Refuse any path the site's current robots.txt disallows.
+
+    OLX writes its rules with leading and trailing wildcards, so they are read
+    as patterns rather than prefixes. The rules are not hard-coded anywhere:
+    whatever the file says on the day of the run is what the collector obeys,
+    which is why a newly disallowed endpoint stops a run instead of being
+    crawled anyway.
+    """
     blocked = []
     applies = False
     for line in robots.splitlines():
@@ -146,10 +164,17 @@ def _collect(output_dir, *, pages, client, progress, uybor_pages=0, pause=time.s
     def check_path(path):
         if any(re.search("^" + re.escape(rule).replace(r"\*", ".*").replace(r"\$", "$"), path) for rule in blocked):
             raise CollectionError("OLX robots.txt ushbu sahifani avtomatik yig'ishga ruxsat bermaydi: " + path)
-    client.check_path = check_path
+    return check_path
+
+
+def _collect(output_dir, *, pages, client, progress, uybor_pages=0, pause=time.sleep):
+    stamp = datetime.now(timezone.utc)
+    records, coverage, geo = [], [], {}
+    # Check current robots rules, including wildcard paths used by OLX.
+    client.check_path = robots_checker(client.get("/robots.txt").text)
     for category, path in CATEGORIES.items():
         seen = set()
-        repeated = False
+        stop = None
         unavailable = 0
         fetched = set()
         page = 1
@@ -162,22 +187,42 @@ def _collect(output_dir, *, pages, client, progress, uybor_pages=0, pause=time.s
         category_id, unavailable, prefetched = _verified_category_id(client, discover_ids(first_html))
         if category_id is not None:
             strategy = f"category_api:{category_id}"
-            for offer in client.iter_offers(category_id=category_id, max_pages=pages, limit=40):
-                key = str(offer["id"])
-                if key in seen:
-                    continue
-                seen.add(key)
-                records.append(_housing_fields(offer, category))
-                progress(f"OLX: {category}, {len(seen)} e'lon")
+            if pages is None:
+                # No page limit means the whole category, which is larger than
+                # any one query can serve, so it is read as many narrower ones.
+                report = {}
+                def note(message, _category=category):  # name the category in every line
+                    progress(message.replace("OLX:", f"OLX {_category}:", 1))
+                for offer in iter_category(client, category_id=category_id,
+                                           progress=note, report=report, cache=geo):
+                    seen.add(str(offer["id"]))
+                    records.append(_housing_fields(offer, category))
+                entry = {"category": category, "listings": len(seen),
+                         "queries": report.get("queries", 0),
+                         "unavailable": unavailable, "stop": "partitioned",
+                         "strategy": strategy}
+                if report.get("unreachable"):
+                    entry["unreachable"] = report["unreachable"]
+                    entry["stop"] = "depth_limit"
+            else:
+                for offer in client.iter_offers(category_id=category_id, max_pages=pages):
+                    key = str(offer["id"])
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    records.append(_housing_fields(offer, category))
+                    progress(f"OLX: {category}, {len(seen)} e'lon")
+                entry = {"category": category, "pages_requested": client.last_pages,
+                         "listings": len(seen), "unavailable": unavailable,
+                         "stop": client.last_stop, "strategy": strategy}
             if not seen:
                 raise CollectionError(
                     f"OLX toifasidan e'lonlar qaytmadi: {category} (category_id={category_id}). "
                     "Hisobot yaratilmagan.")
-            coverage.append({"category": category, "pages_requested": pages, "listings": len(seen),
-                             "unavailable": unavailable, "stop": client.last_stop, "strategy": strategy})
+            coverage.append(entry)
             continue
         strategy = "listing_pages"
-        for page in range(1, pages + 1):
+        for page in range(1, (pages if pages is not None else PAGE_CEILING) + 1):
             url = BASE + path
             progress(f"OLX: {category}, {page}-sahifa")
             html = first_html if page == 1 else client.get(path, params={"page": page}).text
@@ -196,19 +241,25 @@ def _collect(output_dir, *, pages, client, progress, uybor_pages=0, pause=time.s
                 except OfferUnavailable:
                     unavailable += 1
             if not offers and card_ids and all(i in seen for i in card_ids):
-                repeated = True
+                stop = "repeated_page"
+                break
+            if not offers and not card_ids and seen:
+                # Walked past the last page this category has; what was read
+                # before it is complete.
+                stop = "exhausted"
                 break
             if not offers:
                 raise CollectionError(f"OLX sahifasidan tuzilmali e'lonlar topilmadi: {url}, page={page}. Sahifa tuzilishi o'zgargan yoki kirish cheklangan bo'lishi mumkin. Hisobot yaratilmagan.")
             fresh = [offer for offer in offers if str(offer["id"]) not in seen]
             if not fresh:
-                repeated = True
+                stop = "repeated_page"
                 break
             for offer in fresh:
                 seen.add(str(offer["id"]))
                 records.append(_housing_fields(offer, category))
         coverage.append({"category": category, "pages_requested": page, "listings": len(seen),
-                         "unavailable": unavailable, "stop": "repeated_page" if repeated else "page_limit",
+                         "unavailable": unavailable,
+                         "stop": stop or ("page_limit" if pages is not None else "depth_limit"),
                          "strategy": strategy})
     # Fetch the official dated conversion rate; never silently use a stale default.
     fx = client.session.get("https://cbu.uz/uz/arkhiv-kursov-valyut/json/USD/", timeout=30)
@@ -218,7 +269,7 @@ def _collect(output_dir, *, pages, client, progress, uybor_pages=0, pause=time.s
         raise CollectionError("Markaziy bank valyuta kursi noto'g'ri")
     payload = {"source": BASE, "collected_at": stamp.isoformat(), "coverage": coverage,
                "fx": {"rate": float(rate["Rate"]), "date": rate["Date"], "source": "https://cbu.uz/uz/arkhiv-kursov-valyut/"}, "data": records}
-    if uybor_pages:
+    if uybor_pages is None or uybor_pages:
         # A second marketplace, collected over plain HTTP; its listings are
         # kept in their own key so each source stays identifiable.
         from .uybor import collect as collect_uybor

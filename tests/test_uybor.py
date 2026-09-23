@@ -135,3 +135,21 @@ def test_source_mix_reports_composition_only_when_pooled():
     assert mix["E'lonlar"].sum() == 3
     single = frame[frame["source"] == "OLX.uz"]
     assert source_mix(single).empty  # nothing pooled, nothing to disclose
+
+
+def test_collect_without_a_page_limit_reads_until_the_api_runs_out():
+    session = Mock()
+    pages = [{"results": [listing(id=i) for i in range(n * 100, n * 100 + 100)],
+              "total": 250} for n in range(2)]
+    pages.append({"results": [listing(id=i) for i in range(200, 250)], "total": 250})
+    session.get.side_effect = [reply(status=200, text="User-agent: *\nDisallow: /admin/"),
+                               *(reply(p) for p in pages)]
+    rows, coverage = collect(session=session, pause=lambda _: None, progress=lambda _: None)
+    assert len(rows) == 250
+    assert coverage["stop"] == "exhausted" and coverage["requests"] == 3
+
+
+def test_page_count_must_be_positive_or_absent():
+    for bad in (0, -1, 1001, "all"):
+        with pytest.raises(ValueError):
+            collect(pages=bad, session=Mock(), pause=lambda _: None, progress=lambda _: None)

@@ -100,7 +100,7 @@ def run(
     started = datetime.now()
     result = RunResult()
 
-    llm = LLM(settings.anthropic_api_key, settings.model)
+    llm = LLM(settings.llm_api_key, settings.model)
     say(f"Language model: {llm.status}")
 
     # 1. Load ---------------------------------------------------------------

@@ -22,6 +22,10 @@ CATEGORY_PROPERTY = {7: "Kvartira", 8: "Hovli", 28: "Hovli"}
 #: The API returns at most this many per request whatever is asked for.
 MAX_LIMIT = 100
 
+#: A run with no page limit ends when the API runs out of listings; this is the
+#: hard stop that keeps an unbounded walk finite if it never does.
+PAGE_CEILING = 1000
+
 #: ``price`` means different things per listing, and reading it as a total
 #: would be wrong by a factor of the floor area.
 PRICE_TOTAL, PRICE_PER_SQM = "all", "sqm"
@@ -116,21 +120,25 @@ def housing_fields(listing: dict) -> dict | None:
     }
 
 
-def collect(*, pages=5, session=None, pause=time.sleep, progress=print):
+def collect(*, pages=None, session=None, pause=time.sleep, progress=print):
     """Return residential listings and a coverage record.
 
     ``pages`` is counted in requests of up to 100 listings, matching the API's
-    own ceiling, so it is not the same unit as the OLX page count.
+    own ceiling, so it is not the same unit as the OLX page count. ``None``,
+    the default, keeps asking until the API stops returning new listings.
     """
-    if not isinstance(pages, int) or not 1 <= pages <= 200:
-        raise ValueError("Uybor pages must be between 1 and 200")
+    if pages is not None and (not isinstance(pages, int) or isinstance(pages, bool)
+                              or not 1 <= pages <= PAGE_CEILING):
+        raise ValueError(f"Uybor pages must be between 1 and {PAGE_CEILING}, "
+                         "or None for every page")
     owns = session is None
     session = session or requests.Session()
     try:
         if _robots_blocked(session, "/api/v1/listings"):
             raise UyborError("Uybor robots.txt ushbu manzilni yig'ishga ruxsat bermaydi")
-        records, seen, total, stop = [], set(), None, "page_limit"
-        for page in range(1, pages + 1):
+        records, seen, total = [], set(), None
+        stop = "page_limit" if pages is not None else "depth_limit"
+        for page in range(1, (pages if pages is not None else PAGE_CEILING) + 1):
             if page > 1:
                 pause(2)
             body = fetch_page(session, page=page)
@@ -147,7 +155,7 @@ def collect(*, pages=5, session=None, pause=time.sleep, progress=print):
                 row = housing_fields(listing)
                 if row is not None:
                     records.append(row)
-            progress(f"Uybor: {len(records)} e'lon")
+            progress(f"Uybor: {page}-sahifa, {len(records)} e'lon")
             if not fresh:
                 stop = "repeated_page"
                 break

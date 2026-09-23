@@ -73,6 +73,10 @@ class ResearchFindings:
     themes: list[ThemeFinding] = field(default_factory=list)
     policy_events: list[PolicyEvent] = field(default_factory=list)
     macro_factors: list[dict[str, Any]] = field(default_factory=list)
+    #: Ranked forces behind this quarter's price movement, each tied to the
+    #: source that documents it and flagged by how well the evidence supports
+    #: it. The bulletin prints these as its "why prices moved" section.
+    price_drivers: list[dict[str, Any]] = field(default_factory=list)
     sources: list[SearchHit] = field(default_factory=list)
     llm_used: bool = False
     web_used: bool = False
@@ -83,6 +87,7 @@ class ResearchFindings:
             "themes": [t.to_dict() for t in self.themes],
             "policy_events": [e.to_dict() for e in self.policy_events],
             "macro_factors": self.macro_factors,
+            "price_drivers": self.price_drivers,
             "sources": [s.to_dict() for s in self.sources],
             "llm_used": self.llm_used,
             "web_used": self.web_used,
@@ -102,6 +107,16 @@ class ResearchFindings:
                     "url": event.source,
                     "domain": websearch._domain(event.source),
                 }
+        # A driver the report prints as an explanation must carry its source
+        # into the bibliography, or a reader cannot check the attribution.
+        for driver in self.price_drivers:
+            url = str(driver.get("source", ""))
+            if url and url not in seen:
+                seen[url] = {
+                    "title": str(driver.get("source_title") or driver.get("driver", "")),
+                    "url": url,
+                    "domain": websearch._domain(url),
+                }
         return list(seen.values())
 
 
@@ -117,9 +132,15 @@ def gather(
     results_per_query: int = 6,
     pages_to_read: int = 3,
     policy_file: Path | None = None,
+    language: str = "en",
     progress: Callable[[str], None] | None = None,
 ) -> ResearchFindings:
-    """Run the research agenda and return structured, cited findings."""
+    """Run the research agenda and return structured, cited findings.
+
+    ``language`` is the language the synthesis is written in. The Uzbek
+    bulletin prints these findings as prose, so asking for Uzbek here keeps a
+    Russian headline or an English summary from reaching the page untranslated.
+    """
     say = progress or (lambda msg: LOGGER.info(msg))
     findings = ResearchFindings()
 
@@ -175,7 +196,8 @@ def gather(
     if llm is not None and llm.available and (hits_by_theme or findings.policy_events):
         try:
             say("Synthesising research findings with the language model...")
-            _synthesise(llm, findings, agenda, hits_by_theme, data_highlights)
+            _synthesise(llm, findings, agenda, hits_by_theme, data_highlights,
+                        language=language)
             findings.llm_used = True
         except LLMUnavailable as exc:
             findings.notes.append(f"LLM synthesis unavailable ({exc}); falling back to evidence digest.")
@@ -196,6 +218,7 @@ def _synthesise(
     agenda: list[knowledge.Theme],
     hits_by_theme: dict[str, list[SearchHit]],
     data_highlights: str,
+    language: str = "en",
 ) -> None:
     evidence_blocks = []
     for theme in agenda:
@@ -212,6 +235,15 @@ def _synthesise(
         f"- {e.date} | {e.title} ({e.confidence} confidence): {e.summary} Expected impact: {e.expected_impact}"
         for e in findings.policy_events
     ) or "(none on file)"
+
+    write_in = {
+        "uz": (
+            "Write every summary, point and expected_impact in Uzbek Latin script, as an "
+            "Uzbek economist writes: direct, contemporary Uzbek, not a word-for-word "
+            "translation. Source titles and URLs stay as they are. Keep the JSON keys and "
+            "the enumerated values (direction, confidence, category) in English."),
+        "ru": "Write every summary, point and expected_impact in Russian.",
+    }.get(language, "Write in English.")
 
     prompt = f"""Analyse the Uzbek housing market using the source material below.
 
@@ -231,6 +263,14 @@ Produce a rigorous, cited synthesis. Rules:
 - Every point must carry the id(s) of the source it came from, e.g. "policy-2".
 - Explain mechanisms, not just events: how does a measure reach prices, volumes or credit?
 - Where the dataset and the sources disagree, say so explicitly.
+- The dataset summary above states what prices did this quarter. For each theme, say
+  whether the evidence would push prices up, down or neither over that window, and
+  through which channel — credit conditions, supply completions, the exchange rate,
+  household income, seasonal demand. Name the channel; do not assert a cause you cannot
+  trace through one.
+- Distinguish a measure that was announced from one that took effect, and say which.
+  An announced programme moves expectations; a disbursed one moves demand.
+- {write_in}
 
 Return JSON of exactly this shape:
 {{
@@ -247,8 +287,24 @@ Return JSON of exactly this shape:
   "macro_factors": [
     {{"factor": "...", "current_state": "...", "housing_impact": "...",
       "direction": "positive|negative|mixed|neutral", "source_id": "..."}}
+  ],
+  "price_drivers": [
+    {{"driver": "<short name of the force, e.g. subsidised mortgage disbursement>",
+      "channel": "credit|supply|currency|income|seasonal|policy|sentiment",
+      "evidence": "<what the sources actually say, with no invented figures>",
+      "effect": "<up|down|mixed|none> on asking prices over the reported quarter",
+      "segment": "primary|secondary|rent|all",
+      "strength": "documented|likely|speculative",
+      "source_id": "<the source id it came from>"}}
   ]
 }}
+
+"price_drivers" is the part the report leads with: order it by how much of this
+quarter's movement each force plausibly accounts for, strongest first, and give at most
+six. Mark a driver "documented" only when a source states the measure and its size;
+"likely" when the mechanism is well established but this quarter's evidence is indirect;
+"speculative" when it is a reasonable guess. Never present a speculative driver as a
+documented one.
 
 Include only policy events you actually found evidence for in the material above.
 Do not repeat events already on file unless you have new detail to add."""
@@ -298,6 +354,24 @@ Do not repeat events already on file unless you have new detail to add."""
             )
         )
         existing.add((date[:7], title.lower()[:40]))
+
+    for item in result.get("price_drivers", []) or []:
+        hit = lookup.get(str(item.get("source_id", "")))
+        driver = str(item.get("driver", "")).strip()
+        if not driver:
+            continue
+        findings.price_drivers.append(
+            {
+                "driver": driver,
+                "channel": str(item.get("channel", "")),
+                "evidence": str(item.get("evidence", "")),
+                "effect": str(item.get("effect", "")),
+                "segment": str(item.get("segment", "all")),
+                "strength": str(item.get("strength", "speculative")),
+                "source": hit.url if hit else "",
+                "source_title": hit.title if hit else "",
+            }
+        )
 
     for item in result.get("macro_factors", []) or []:
         hit = lookup.get(str(item.get("source_id", "")))
