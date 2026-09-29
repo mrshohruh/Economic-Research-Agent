@@ -120,10 +120,6 @@ There is no site-wide total beside them: the only endpoint that publishes an
 unclamped count is one robots.txt asks crawlers to leave alone, so the agent
 reports what it read rather than a share of a number it may not request.
 
-Verified against the live site: Samarkand rent apartments held more listings
-than one query can serve, and the split collected all 1,281 of them in 96
-seconds using 28 queries.
-
 `--olx-pages N` cuts a run short at N pages of a single unsplit query per
 category. It is the fast path for a smoke test, not a smaller version of the
 full sweep: values below about 5 leave most regional medians blank, because a
@@ -578,9 +574,6 @@ Selected comparisons appear in the Word report even without an API key. Every
 column decision, including exclusions and reasons, is saved in the run JSON at
 brief.cross_section.variable_assessment. This assessment concerns the normalised
 listing table; nested feed attributes not extracted by the loader are not assessed.
-Known housing measures are no longer rejected merely because their integer values
-are all distinct. Property flags are not treated as promotion flags solely because
-their names begin with is_ or has_.
 
 
 ## OLX: automatic collection and Uzbek bulletin
@@ -638,11 +631,9 @@ A challenge page that does not clear on its own stops the run, exactly as a 403
 does. Everything else is unchanged by the switch: the same robots.txt rules,
 request pacing, schema validation and snapshot format apply.
 
-Verified live on 2026-09-21: robots.txt and all four category pages returned
-HTTP 200, and a `--olx-pages 2` run collected 412 listings across the four
-categories with the dated CBU rate. Medians below 15 observations are suppressed,
-so capping a run with a small `--olx-pages` leaves many regional cells blank; the
-default, which reads every page, fills them.
+Medians below 15 observations are suppressed, so capping a run with a small
+`--olx-pages` leaves many regional cells blank; the default, which reads every
+page, fills them.
 
 
 ### Historical price trends from an archive
@@ -750,21 +741,19 @@ the grouping key is unified.
 
 ### OLX collection client and observation history
 
-Collection now uses `uzhousing/ingest/olx_client.py` for paced HTTP access.
-Category pages provide embedded offers or explicit numeric IDs on listing cards;
-when an ID has no embedded offer, the collector requests the undocumented
-`/api/v1/offers/{id}/` endpoint. It validates the response ID and schema.
-404/410 detail responses are counted as unavailable, never classified as sold.
-401/403/429 stop collection without retries or an access-control workaround.
+Collection uses `uzhousing/ingest/olx_client.py` for paced HTTP access. The
+collector validates response IDs and schema; 404/410 detail responses are
+counted as unavailable, never classified as sold, and 401/403/429 stop
+collection without retries or any access-control workaround.
 
-Category pages are now client-rendered and no longer embed their listings, so the
-collector first establishes the category's own numeric ID by reading it from the
-listings that page actually shows. The ID is never guessed: it is accepted only
-when independent listings agree on it. With an ID established, the bounded,
-deduplicated `/api/v1/offers/` pagination returns about forty full records per
-request instead of one request per listing, and the snapshot records which
-strategy each category used under `coverage[].strategy`. Where no ID can be
-verified, collection falls back to reading listing pages as before.
+Category pages are client-rendered, so the collector first establishes the
+category's own numeric ID by reading it from the listings the page actually
+shows. The ID is never guessed: it is accepted only when independent listings
+agree on it. With an ID established, the bounded, deduplicated
+`/api/v1/offers/` pagination returns about forty full records per request
+instead of one request per listing, and the snapshot records which strategy
+each category used under `coverage[].strategy`. Where no ID can be verified,
+collection falls back to reading listing pages directly.
 
 OLX validates the paging offset and refuses anything beyond 1000 with HTTP 400,
 so one query yields at most about 1,040 listings however many pages are asked
@@ -787,29 +776,24 @@ capped `--olx-pages N` run stops at the offset limit instead, recorded as
 `depth_limit` in `coverage[].stop`; that is a normal stop, not a failure.
 A mid-run 401/403/429 still stops the run, and is never mistaken for the cap.
 
-Successful collections retain the same JSON snapshot format for the report and
-also append observations to `outputs/olx_history.sqlite` (or the selected output
-folder). `collection_runs` stores coverage and FX metadata; `listing_snapshots`
-stores housing fields and price/currency for each collection timestamp.
-`listing_observation_history` exposes first_seen, last_seen and observation count.
-These are observed dates, not confirmed time on market or transaction dates.
-Missing listings in bounded crawls are not marked sold or removed. Reimporting
-one snapshot does not duplicate its observations. Contacts/photos remain excluded.
-JSON snapshots remain available if the separate SQLite archive cannot be written;
-such a storage failure stops the run and is surfaced to the caller.
-
-This update changes data collection/storage only. Report templates, calculations,
-language, layout and the existing synthetic sample are unchanged.
+Successful collections write a JSON snapshot for the report and append
+observations to `outputs/olx_history.sqlite` (or the selected output folder).
+`collection_runs` stores coverage and FX metadata; `listing_snapshots` stores
+housing fields and price/currency for each collection timestamp;
+`listing_observation_history` exposes first_seen, last_seen and observation
+count. These are observed dates, not confirmed time on market or transaction
+dates. Missing listings in bounded crawls are not marked sold or removed.
+Reimporting one snapshot does not duplicate its observations. Contacts and
+photos are excluded. If the SQLite archive cannot be written, the run stops
+and the failure is surfaced to the caller; the JSON snapshot remains.
 
 
 ### Claude analysis in the OLX/Uybor bulletin
 
-The normal `--olx` / `--olx-snapshot` workflow now requires
-`ANTHROPIC_API_KEY` and uses the configured `ANTHROPIC_MODEL` (or `--model`)
-to interpret computed tables and write Uzbek summaries and findings. Existing
-section titles/order, text-block and bullet counts, tables, charts and renderers
-are preserved. Prose length can change pagination. Source notes and methodology
-remain deterministic, with the authorship statement updated to identify Claude.
+The `--olx` / `--olx-snapshot` workflow requires `ANTHROPIC_API_KEY` and uses
+the configured `ANTHROPIC_MODEL` (or `--model`) to interpret computed tables
+and write Uzbek summaries and findings. Source notes and methodology are
+deterministic; the authorship statement identifies Claude.
 
 Section prose is split by purpose. The bullet blocks carry findings only: the
 direction and breadth of a move, the places behind it, the levels and the
@@ -833,11 +817,12 @@ decoding fails the run rather than being printed.
 These checks prevent new numeric literals but do not prove every interpretation;
 causal explanations must remain hypotheses and require review.
 
-No silent template fallback is used in the CLI/app OLX workflow. Missing keys or
-API failures produce an error. Low-level `write(..., llm=None)` remains available
-for offline template tests. The run log records `narrative.generated_by`, model,
-last successful response token usage and the actual generated text blocks. Token
-usage is for that response, not total billing including any retries.
+No silent template fallback is used in the CLI/app OLX workflow. Missing keys
+or API failures produce an error. Low-level `write(..., llm=None)` remains
+available for offline template tests. The run log records
+`narrative.generated_by`, the model, last successful response token usage and
+the generated text blocks. Token usage is for that response, not total
+billing including retries.
 
 
 Prose follows one set of Uzbek conventions, held in
