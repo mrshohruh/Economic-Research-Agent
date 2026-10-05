@@ -1,24 +1,24 @@
-"""Uzbekistan Housing Market Research Agent.
-
-Give it a JSON file, a SQL script or a database, and it profiles the data,
-analyses trends and drivers, researches the policy and macro backdrop, and
-writes a fully formatted Word report with figures and tables.
-"""
+"""O'zbekiston uy-joy bozori sharhi."""
 
 from __future__ import annotations
 
-__version__ = "1.0.0"
+from dataclasses import dataclass, field
+from pathlib import Path
 
-__all__ = ["Settings", "run", "__version__"]
+__version__ = "2.0.0"
 
 
-def __getattr__(name: str):  # lazy so `import uzhousing` stays cheap
-    if name == "Settings":
-        from .config import Settings
+@dataclass
+class RunResult:
+    report_path: Path | None = None
+    pdf_path: Path | None = None
+    run_log: Path | None = None
+    duration_seconds: float = 0.0
+    warnings: list[str] = field(default_factory=list)
 
-        return Settings
-    if name == "run":
-        from .pipeline import run
+    @property
+    def ok(self) -> bool:
+        return self.report_path is not None and self.report_path.exists()
 
-        return run
-    raise AttributeError(name)
+
+__all__ = ["RunResult", "__version__"]

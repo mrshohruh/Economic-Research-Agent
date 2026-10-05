@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Entry point: python run.py --data <file>"""
+"""Kirish nuqtasi: python run.py [--update]"""
 
 from __future__ import annotations
 

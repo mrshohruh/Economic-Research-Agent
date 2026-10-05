@@ -1,38 +1,22 @@
-# Core data stack
+# Ma'lumot ishlov berish
 pandas>=2.2
 numpy>=1.26
-scipy>=1.13
-statsmodels>=0.14
 
-# Ingestion
-openpyxl>=3.1
-SQLAlchemy>=2.0
-
-# Visualisation
-matplotlib>=3.9
-
-# Reporting
+# Hisobot tayyorlash
 python-docx>=1.1
 reportlab>=4.0
+matplotlib>=3.9
 
-# LLM. The project supports five providers:
-#   anthropic (Claude), openai (GPT), and the free-tier trio
-#   groq, gemini (Google), and openrouter — all three use the OpenAI SDK
-#   against each vendor's OpenAI-compatible endpoint, so no extra client is
-#   needed to switch providers.
+# LLM provayderlar
 anthropic>=0.40
 openai>=1.60
 python-dotenv>=1.0
 
-# Web research
+# Veb-tahlil
 ddgs>=9.0
 requests>=2.32
 beautifulsoup4>=4.12
 lxml>=5.2
 
-# Browser-based OLX collection (plain HTTP is refused with 403).
-# After installing, fetch a browser once:  python -m playwright install chromium
+# OLX ma'lumotlarini yig'ish uchun brauzer
 playwright>=1.44
-
-# UI
-streamlit>=1.37

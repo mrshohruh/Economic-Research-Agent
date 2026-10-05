@@ -1,5 +1,5 @@
-"""Quantitative analysis modules."""
+"""Ma'lumotlar sifati tahlili."""
 
-from . import drivers, metrics, regional, timeseries
+from . import quality
 
-__all__ = ["metrics", "timeseries", "regional", "drivers"]
+__all__ = ["quality"]

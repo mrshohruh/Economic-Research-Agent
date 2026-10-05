@@ -2074,22 +2074,18 @@ def _research(settings, archive, llm, progress):
 
 def run_olx(settings, *, pages=None, progress=print, title="", snapshot_path=None,
             browser=False, headless=True, archive=None, rebuild_history=False,
-            uybor_pages=0):
+            uybor_pages=None):
     from ..ingest.olx import collect
-    from ..pipeline import RunResult
+    from .. import RunResult
     import time
     start = time.monotonic()
-    from ..llm import LLM, LLMUnavailable
+    from ..llm import LLM
     llm = LLM.from_settings(settings)
-    if not llm.available:
-        # llm.status carries the real cause — a missing key, but equally an
-        # uninstalled client or a rejected credential. Naming only the key sent
-        # the reader to a correctly-filled .env when the module was the problem.
-        raise LLMUnavailable(
-            f"OLX hisoboti uchun model kerak, lekin u ishga tushmadi: {llm.status}. "
-            f"Kalit {settings.llm_key_name} sifatida .env faylida bo'lishi kerak."
-        )
-    progress(f"Model tahlili: {settings.llm_model}")
+    if llm.available:
+        progress(f"Model tahlili: {settings.llm_model}")
+    else:
+        progress("Model kaliti topilmadi. Hisobot shablon asosida tayyorlanadi.")
+        llm = None
     snapshot_path = Path(snapshot_path) if snapshot_path else collect(
         settings.output_dir, pages=pages, progress=progress,
         browser=browser, headless=headless, uybor_pages=uybor_pages)
