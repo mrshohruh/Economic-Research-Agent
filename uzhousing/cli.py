@@ -7,7 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
-from .config import LANGUAGES, Settings
+from .config import LANGUAGES, SUPPORTED_PROVIDERS, Settings
 from .pipeline import run
 
 
@@ -62,11 +62,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     behaviour = parser.add_argument_group("behaviour")
     behaviour.add_argument("--no-web", action="store_true", help="skip live web research")
+    behaviour.add_argument("--provider",
+                           choices=list(SUPPORTED_PROVIDERS),
+                           help="LLM vendor to call first. Defaults to the vendor named by "
+                                "LLM_PROVIDER or by the model id, else to whichever free "
+                                "provider has a key set.")
     behaviour.add_argument("--model",
-                           help="Model id, e.g. claude-opus-5 or gpt-6-astra. The id picks "
-                                "the vendor, and therefore which API key is used.")
+                           help="Model id, e.g. claude-opus-5, gpt-5 or openai/gpt-oss-120b. "
+                                "May carry a provider prefix such as groq:openai/gpt-oss-120b, "
+                                "in which case the prefix selects the vendor.")
     behaviour.add_argument("--api-key",
-                           help="API key for the chosen model's vendor (overrides .env)")
+                           help="API key for the chosen provider (overrides .env)")
+    behaviour.add_argument("--no-llm-fallback", dest="llm_fallback",
+                           action="store_false", default=None,
+                           help="Disable the free-provider fallback chain for this run.")
     behaviour.add_argument("--results", type=int, help="search results per query (default: 6)")
     behaviour.add_argument("--pages", type=int, help="pages to download per theme (default: 3)")
     behaviour.add_argument("--max-rows", type=int, metavar="N",
@@ -111,13 +120,33 @@ def main(argv: list[str] | None = None) -> int:
         settings.language = args.lang
     if args.no_web:
         settings.web_research = False
+    if args.provider:
+        settings.llm_provider_setting = args.provider
     if args.model:
-        settings.model = args.model
+        # ``--model`` can carry a provider prefix such as ``groq:openai/...``
+        # — the resolver in Settings honours it.
+        settings.llm_model_setting = args.model
+        # Keep the legacy ``.model`` attribute in sync too so any code that
+        # reads it directly still sees what the user asked for.
+        from .llm import parse_model_id
+
+        _, bare_model = parse_model_id(args.model)
+        if bare_model:
+            settings.model = bare_model
+    if args.llm_fallback is False:
+        settings.fallback_enabled = False
     if args.api_key:
-        # Assigned to whichever key the chosen model actually reads, so that one
-        # flag works for either vendor.
-        if settings.provider == "openai":
+        # Assigned to whichever key the chosen provider actually reads, so
+        # one flag works for every supported vendor.
+        provider = settings.provider
+        if provider == "openai":
             settings.openai_api_key = args.api_key
+        elif provider == "groq":
+            settings.groq_api_key = args.api_key
+        elif provider == "gemini":
+            settings.gemini_api_key = args.api_key
+        elif provider == "openrouter":
+            settings.openrouter_api_key = args.api_key
         else:
             settings.anthropic_api_key = args.api_key
     if args.results:

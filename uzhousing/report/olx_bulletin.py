@@ -2080,7 +2080,7 @@ def run_olx(settings, *, pages=None, progress=print, title="", snapshot_path=Non
     import time
     start = time.monotonic()
     from ..llm import LLM, LLMUnavailable
-    llm = LLM(settings.llm_api_key, settings.model)
+    llm = LLM.from_settings(settings)
     if not llm.available:
         # llm.status carries the real cause — a missing key, but equally an
         # uninstalled client or a rejected credential. Naming only the key sent
@@ -2089,7 +2089,7 @@ def run_olx(settings, *, pages=None, progress=print, title="", snapshot_path=Non
             f"OLX hisoboti uchun model kerak, lekin u ishga tushmadi: {llm.status}. "
             f"Kalit {settings.llm_key_name} sifatida .env faylida bo'lishi kerak."
         )
-    progress(f"Model tahlili: {settings.model}")
+    progress(f"Model tahlili: {settings.llm_model}")
     snapshot_path = Path(snapshot_path) if snapshot_path else collect(
         settings.output_dir, pages=pages, progress=progress,
         browser=browser, headless=headless, uybor_pages=uybor_pages)

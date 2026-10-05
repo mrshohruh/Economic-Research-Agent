@@ -100,8 +100,18 @@ def run(
     started = datetime.now()
     result = RunResult()
 
-    llm = LLM(settings.llm_api_key, settings.model)
+    # ``LLM.from_settings`` builds the free-provider fallback chain for
+    # production runs. Tests monkey-patch ``pipeline.LLM`` to a plain
+    # callable without the factory, so fall back to the legacy two-arg
+    # constructor in that case.
+    if hasattr(LLM, "from_settings"):
+        llm = LLM.from_settings(settings)
+    else:
+        llm = LLM(settings.llm_api_key, settings.llm_model)
     say(f"Language model: {llm.status}")
+    fallback_providers = getattr(llm, "fallback_providers", [])
+    if fallback_providers:
+        say("Fallback providers configured: " + ", ".join(fallback_providers))
 
     # 1. Load ---------------------------------------------------------------
     say("Loading data...")
@@ -785,6 +795,18 @@ def _write_run_log(
         "figures": [f.to_dict() for f in result.figures],
         "warnings": result.warnings,
         "narrative_engine": narrative.generated_by,
+        # Reproducibility metadata: which provider and model actually served
+        # this run, including whether the fallback chain was used.
+        "llm": {
+            "provider_configured": settings.provider,
+            "provider_used": getattr(narrative, "provider_used", "")
+                             or settings.provider,
+            "model_configured": settings.llm_model,
+            "model_used": getattr(narrative, "model_used", "")
+                          or settings.llm_model,
+            "fallback_used": getattr(narrative, "fallback_used", False),
+            "fallback_enabled": settings.fallback_enabled,
+        },
         # Screened-out variables are recorded here rather than in the report: the
         # reader wants the market, the operator wants the audit trail.
         "variable_screen": analysis.relevance.to_dict() if analysis.relevance else {},

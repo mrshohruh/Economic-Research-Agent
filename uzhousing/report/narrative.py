@@ -93,6 +93,12 @@ class Narrative:
     risks: list[str] = field(default_factory=list)
     limitations: list[str] = field(default_factory=list)
     generated_by: str = "deterministic template"
+    # Reproducibility metadata: which provider and model actually produced
+    # the narrative, and whether the fallback chain was used to get there.
+    # Blank on the deterministic template path.
+    provider_used: str = ""
+    model_used: str = ""
+    fallback_used: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         data = {k: v for k, v in vars(self).items() if k != "recommendations"}
@@ -201,7 +207,25 @@ Return JSON of exactly this shape:
     if not isinstance(result, dict):
         raise LLMUnavailable("narrative was not a JSON object")
 
-    narrative = Narrative(generated_by=f"Claude ({llm.model})")
+    # ``display_name`` reads the last provider that actually served a call
+    # (so a Groq-via-fallback run is credited to Groq, not Claude). On a
+    # test double without that attribute it falls through to the legacy
+    # ``"Claude (model)"`` label for backward compatibility.
+    raw_display = getattr(llm, "display_name", None)
+    display = raw_display if isinstance(raw_display, str) and raw_display else "Claude"
+    last_model = getattr(llm, "last_model", None)
+    model_name = last_model if isinstance(last_model, str) and last_model else llm.model
+    narrative = Narrative(generated_by=f"{display} ({model_name})")
+    last_provider = getattr(llm, "last_provider", None)
+    provider_fallback = getattr(llm, "provider", None)
+    narrative.provider_used = (
+        last_provider if isinstance(last_provider, str) and last_provider
+        else provider_fallback if isinstance(provider_fallback, str) and provider_fallback
+        else ""
+    )
+    narrative.model_used = model_name
+    fallback_used = getattr(llm, "last_fallback_used", False)
+    narrative.fallback_used = fallback_used if isinstance(fallback_used, bool) else False
     for field_name in (
         "executive_summary", "key_findings", "current_situation", "historical_trends",
         "regional_analysis", "drivers", "policy_analysis", "macro_context",

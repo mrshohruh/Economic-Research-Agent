@@ -177,12 +177,35 @@ def enrich(content, llm, progress=lambda _: None):
 
     _credit_claude(content)
     remaining = editorial.summary(editorial.review(content))
-    return {"generated_by": "anthropic_claude", "model": llm.model,
+    # Credit the provider that actually served the call so a Groq-via-fallback
+    # run reads as ``generated_by: "groq"`` rather than ``anthropic_claude``.
+    # ``_as_str`` ignores Mock-style sentinel attributes created by test
+    # doubles that do not themselves set these fields.
+    served_provider = (_as_str(getattr(llm, "last_provider", None))
+                       or _as_str(getattr(llm, "provider", None))
+                       or "anthropic")
+    served_model = _as_str(getattr(llm, "last_model", None)) or llm.model
+    fallback_used = getattr(llm, "last_fallback_used", False)
+    if not isinstance(fallback_used, bool):
+        fallback_used = False
+    label = "anthropic_claude" if served_provider == "anthropic" else served_provider
+    return {"generated_by": label, "model": served_model,
+            "provider": served_provider,
+            "fallback_used": fallback_used,
             "usage": getattr(llm, "last_usage", {}),
             "editorial": {"first_pass": editorial.summary(issues),
                           "revised_blocks": revised, "remaining": remaining},
             "blocks": [{"id": key, "items": items}
                        for (key, _, _), (_, items) in zip(targets, replacements)]}
+
+
+def _as_str(value) -> str:
+    """Return value if it is a non-empty string; else empty.
+
+    Protects against test doubles (``unittest.mock.Mock``) whose implicit
+    attribute access returns a new ``Mock`` instance rather than ``None``.
+    """
+    return value if isinstance(value, str) and value else ""
 
 
 def _evidence(content, facts):

@@ -6,7 +6,13 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .llm import ENV_KEY_FOR_PROVIDER, provider_for
+from .llm import (
+    ENV_KEY_FOR_PROVIDER,
+    FALLBACK_ORDER,
+    PROVIDER_DEFAULTS,
+    parse_model_id,
+    provider_for,
+)
 
 try:  # python-dotenv is optional at import time
     from dotenv import load_dotenv
@@ -19,6 +25,9 @@ except Exception:  # pragma: no cover - dotenv missing is not fatal
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 LANGUAGES = {"en": "English", "ru": "Russian", "uz": "Uzbek"}
+
+# All provider names the fallback chain can touch.
+SUPPORTED_PROVIDERS: tuple[str, ...] = tuple(ENV_KEY_FOR_PROVIDER.keys())
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -47,11 +56,43 @@ def _float_env(name: str, default: float) -> float:
 class Settings:
     """Everything the pipeline needs to know about how to run."""
 
+    # ------------------------------------------------------------------
+    # LLM credentials. Any one is enough; the fallback chain picks whichever
+    # provider is available when the primary one isn't.
+    # ------------------------------------------------------------------
     anthropic_api_key: str = ""
     openai_api_key: str = ""
-    # The model id also picks the vendor, and therefore which of the two keys
-    # above is used. See ``uzhousing.llm.provider_for``.
+    groq_api_key: str = ""
+    gemini_api_key: str = ""
+    openrouter_api_key: str = ""
+
+    # Legacy model id (from the ``MODEL`` or ``ANTHROPIC_MODEL`` env vars).
+    # Still consulted so that existing .env files keep working. New callers
+    # should prefer ``LLM_PROVIDER`` + ``LLM_MODEL``.
     model: str = "claude-opus-5"
+
+    # Explicit provider override, from ``LLM_PROVIDER`` or ``--provider``.
+    # Empty means auto-detect from the model id and available keys.
+    llm_provider_setting: str = ""
+    # Vendor-neutral model override, from ``LLM_MODEL`` or ``--model``.
+    # Can be a bare id (``openai/gpt-oss-120b``) or carry a provider prefix
+    # (``groq:openai/gpt-oss-120b``), in which case the prefix wins.
+    llm_model_setting: str = ""
+
+    # Per-provider model overrides. A blank value means "use the provider's
+    # default from ``PROVIDER_DEFAULTS``".
+    groq_model: str = ""
+    gemini_model: str = ""
+    openrouter_model: str = ""
+
+    # If true, when the chosen provider is unreachable (rate-limited, down,
+    # unauthorised at startup, etc.) the next free provider with a key is
+    # tried, in :data:`FALLBACK_ORDER`.
+    fallback_enabled: bool = True
+
+    # ------------------------------------------------------------------
+    # Non-LLM pipeline settings
+    # ------------------------------------------------------------------
     web_research: bool = True
     search_results_per_query: int = 6
     pages_to_read: int = 3
@@ -83,16 +124,30 @@ class Settings:
         lang = (os.getenv("REPORT_LANGUAGE", "en") or "en").strip().lower()
         if lang not in LANGUAGES:
             lang = "en"
+        provider_setting = (os.getenv("LLM_PROVIDER", "") or "").strip().lower()
+        if provider_setting and provider_setting not in SUPPORTED_PROVIDERS:
+            # Treat an unknown provider name as if it was not set, rather than
+            # crashing. The pipeline logs the fallback that gets picked.
+            provider_setting = ""
         return cls(
             anthropic_api_key=(os.getenv("ANTHROPIC_API_KEY", "") or "").strip(),
             openai_api_key=(os.getenv("OPENAI_API_KEY", "") or "").strip(),
-            # MODEL is the vendor-neutral name; ANTHROPIC_MODEL is still read so
-            # that existing .env files keep working.
+            groq_api_key=(os.getenv("GROQ_API_KEY", "") or "").strip(),
+            gemini_api_key=(os.getenv("GEMINI_API_KEY", "") or "").strip(),
+            openrouter_api_key=(os.getenv("OPENROUTER_API_KEY", "") or "").strip(),
+            # ``MODEL`` is the vendor-neutral legacy name; ``ANTHROPIC_MODEL``
+            # is still read so that existing .env files keep working.
             model=(
                 os.getenv("MODEL", "")
                 or os.getenv("ANTHROPIC_MODEL", "")
                 or "claude-opus-5"
             ).strip(),
+            llm_provider_setting=provider_setting,
+            llm_model_setting=(os.getenv("LLM_MODEL", "") or "").strip(),
+            groq_model=(os.getenv("GROQ_MODEL", "") or "").strip(),
+            gemini_model=(os.getenv("GEMINI_MODEL", "") or "").strip(),
+            openrouter_model=(os.getenv("OPENROUTER_MODEL", "") or "").strip(),
+            fallback_enabled=_bool_env("LLM_FALLBACK_ENABLED", True),
             web_research=_bool_env("WEB_RESEARCH", True),
             search_results_per_query=_int_env("SEARCH_RESULTS_PER_QUERY", 6),
             pages_to_read=_int_env("PAGES_TO_READ", 3),
@@ -103,26 +158,137 @@ class Settings:
             olx_archive=(os.getenv("OLX_ARCHIVE", "") or "").strip(),
         )
 
-    # -- convenience ---------------------------------------------------
+    # ------------------------------------------------------------------
+    # Per-provider lookups
+    # ------------------------------------------------------------------
+    def api_key_for(self, provider: str) -> str:
+        """The configured API key for a provider, or empty."""
+        return {
+            "anthropic":  self.anthropic_api_key,
+            "openai":     self.openai_api_key,
+            "groq":       self.groq_api_key,
+            "gemini":     self.gemini_api_key,
+            "openrouter": self.openrouter_api_key,
+        }.get(provider, "")
+
+    def model_for(self, provider: str) -> str:
+        """The resolved model id for a provider.
+
+        For the "legacy" providers Anthropic and OpenAI this still honours
+        the pre-existing ``MODEL`` / ``ANTHROPIC_MODEL`` env var when it
+        names a model that belongs to this provider; otherwise it falls
+        back to the provider's default.
+        """
+        if provider == self._primary_candidate_provider() and self.llm_model_setting:
+            _, bare = parse_model_id(self.llm_model_setting)
+            if bare:
+                return bare
+        if provider in ("anthropic", "openai"):
+            legacy_provider = provider_for(self.model)
+            if legacy_provider == provider:
+                return self.model
+            return PROVIDER_DEFAULTS.get(provider, {}).get("model", "")
+        override = {
+            "groq":       self.groq_model,
+            "gemini":     self.gemini_model,
+            "openrouter": self.openrouter_model,
+        }.get(provider, "")
+        if override:
+            return override
+        return PROVIDER_DEFAULTS.get(provider, {}).get("model", "")
+
+    def base_url_for(self, provider: str) -> str | None:
+        """Each provider's OpenAI-compatible base URL (``None`` when native)."""
+        return PROVIDER_DEFAULTS.get(provider, {}).get("base_url")
+
+    # ------------------------------------------------------------------
+    # Resolved primary provider / model
+    # ------------------------------------------------------------------
+    def _primary_explicit_provider(self) -> str:
+        """The provider explicitly chosen in configuration.
+
+        An empty return means the user did not state a provider in
+        ``LLM_PROVIDER`` or as a prefix on ``LLM_MODEL``, and the resolver
+        is free to pick one from the legacy ``MODEL`` id or the set of
+        configured keys.
+        """
+        if self.llm_provider_setting:
+            return self.llm_provider_setting
+        if self.llm_model_setting:
+            prefix, _ = parse_model_id(self.llm_model_setting)
+            if prefix:
+                return prefix
+        return ""
+
+    def _primary_candidate_provider(self) -> str:
+        """Backward-compatible primary candidate used by :meth:`model_for`.
+
+        Mirrors the old two-vendor rule: an explicit choice first, then the
+        legacy ``MODEL`` id's provider if its prefix identifies one.
+        """
+        explicit = self._primary_explicit_provider()
+        if explicit:
+            return explicit
+        if self.model:
+            low = self.model.strip().lower()
+            if low.startswith(("claude", "anthropic.")):
+                return "anthropic"
+            if low.startswith(("gpt", "chatgpt", "o1", "o3", "o4", "o5")):
+                return "openai"
+        return ""
+
     @property
     def provider(self) -> str:
-        """Which vendor the configured model belongs to."""
-        return provider_for(self.model)
+        """Which vendor the pipeline should call first.
+
+        Precedence: explicit ``LLM_PROVIDER`` > provider-tagged
+        ``LLM_MODEL`` > a legacy ``MODEL`` id that unambiguously names a
+        vendor > the first configured free-provider key > ``anthropic`` as
+        the historical default.
+        """
+        explicit = self._primary_explicit_provider()
+        if explicit:
+            return explicit
+        legacy = self._primary_candidate_provider()
+        if legacy and (self.api_key_for(legacy) or not any(
+            self.api_key_for(name) for name in FALLBACK_ORDER
+        )):
+            # Honour an existing .env that pins MODEL=claude-* when that
+            # provider's key is set, and keep the legacy default when no
+            # alternative key exists either.
+            return legacy
+        for name in FALLBACK_ORDER:
+            if self.api_key_for(name):
+                return name
+        return legacy or "anthropic"
+
+    @property
+    def llm_model(self) -> str:
+        """The resolved model id the chosen provider will be called with."""
+        return self.model_for(self.provider)
 
     @property
     def llm_api_key(self) -> str:
-        """The key for whichever vendor the configured model belongs to."""
-        return self.openai_api_key if self.provider == "openai" else self.anthropic_api_key
+        """The API key for the chosen provider, or empty."""
+        return self.api_key_for(self.provider)
 
     @property
     def llm_key_name(self) -> str:
-        """The environment variable that holds the key this model needs."""
-        return ENV_KEY_FOR_PROVIDER[self.provider]
+        """The environment variable that holds the chosen provider's key."""
+        return ENV_KEY_FOR_PROVIDER.get(self.provider, "API_KEY")
 
     @property
     def llm_enabled(self) -> bool:
-        return bool(self.llm_api_key)
+        """Any provider has a key — primary or (when enabled) a fallback."""
+        if self.llm_api_key:
+            return True
+        if self.fallback_enabled:
+            return any(self.api_key_for(name) for name in FALLBACK_ORDER)
+        return False
 
+    # ------------------------------------------------------------------
+    # Output locations
+    # ------------------------------------------------------------------
     @property
     def figures_dir(self) -> Path:
         return self.output_dir / "figures"

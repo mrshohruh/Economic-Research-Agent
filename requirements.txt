@@ -15,8 +15,11 @@ matplotlib>=3.9
 python-docx>=1.1
 reportlab>=4.0
 
-# LLM. Only the vendor named by MODEL is actually called, but both clients are
-# installed so switching models needs no reinstall.
+# LLM. The project supports five providers:
+#   anthropic (Claude), openai (GPT), and the free-tier trio
+#   groq, gemini (Google), and openrouter — all three use the OpenAI SDK
+#   against each vendor's OpenAI-compatible endpoint, so no extra client is
+#   needed to switch providers.
 anthropic>=0.40
 openai>=1.60
 python-dotenv>=1.0

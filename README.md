@@ -243,9 +243,15 @@ without one.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | empty | enables the model's written analysis when `MODEL` is a `claude-*` id; **required for `--olx` / `--olx-snapshot`** |
-| `OPENAI_API_KEY` | empty | the same, for a `gpt-*` / `o*` id in `MODEL`. Only the key matching the chosen model is read |
-| `MODEL` | `claude-opus-5` | the model used for reasoning and writing; the id also picks the vendor (`claude-*` → Anthropic, `gpt-*` → OpenAI). `--model` overrides it per run. `ANTHROPIC_MODEL` is still read for older `.env` files |
+| `LLM_PROVIDER` | *(auto-detect)* | which vendor to call first (`groq`, `gemini`, `openrouter`, `openai`, `anthropic`). `--provider` overrides per run. See **[Free LLM providers](#free-llm-providers)** below |
+| `LLM_MODEL` | *(provider default)* | the model id for the chosen provider; may carry a prefix such as `groq:openai/gpt-oss-120b`, in which case the prefix selects the vendor |
+| `LLM_FALLBACK_ENABLED` | `on` | if `on`, the free-provider fallback chain is tried when the primary provider is rate-limited or unavailable. `--no-llm-fallback` turns it off per run |
+| `GROQ_API_KEY` | empty | key for Groq (free, preferred default). Combined with `GROQ_MODEL` (default `openai/gpt-oss-120b`) |
+| `GEMINI_API_KEY` | empty | key for Google Gemini (free tier). Combined with `GEMINI_MODEL` (default `gemini-2.5-flash`) |
+| `OPENROUTER_API_KEY` | empty | key for OpenRouter. Pin a specific model via `OPENROUTER_MODEL` |
+| `ANTHROPIC_API_KEY` | empty | enables Claude's written analysis when the chosen provider is `anthropic`; **required for `--olx` / `--olx-snapshot`** when Claude is the primary |
+| `OPENAI_API_KEY` | empty | the same, for the `openai` provider |
+| `MODEL` | `claude-opus-5` | legacy model id. If `LLM_PROVIDER` / `LLM_MODEL` are unset, this picks the vendor (`claude-*` → Anthropic, `gpt-*` → OpenAI). `--model` overrides per run. `ANTHROPIC_MODEL` is still read for older `.env` files |
 | `OLX_ARCHIVE` | empty | folder of archived OLX `.db` files, used to prefill the archive field in the web interface. The CLI takes the folder as `--olx-archive`; the folder is read one level deep, so it must be the one holding the `.db` files |
 | `UZS_PER_USD` | `12650` | the rate used to put som and dollar-linked "у.е." listings on one currency. Set it to the rate that applied when the data was collected |
 | `MAX_ROWS` | `400000` | row budget for `--data`; `0` reads everything |
@@ -369,6 +375,95 @@ The report always states which mode produced it, in section 2.
 the computed tables, with no template fallback, so `--olx` and `--olx-snapshot`
 stop with an error when no key is set. See
 [Claude analysis in the OLX/Uybor bulletin](#claude-analysis-in-the-olxuybor-bulletin).
+
+---
+
+## Free LLM providers
+
+The agent supports five LLM providers out of the box, three of which are
+free to use with a key:
+
+| Provider | Default model | Key |
+|---|---|---|
+| **Groq** (preferred default) | `openai/gpt-oss-120b` | https://console.groq.com/keys |
+| **Google Gemini** | `gemini-2.5-flash` | https://aistudio.google.com/app/apikey |
+| **OpenRouter** | *(pin via `OPENROUTER_MODEL`)* | https://openrouter.ai/keys |
+| OpenAI (paid) | legacy `MODEL` id | https://platform.openai.com/api-keys |
+| Anthropic (paid) | legacy `MODEL` id | https://console.anthropic.com/ |
+
+All three free providers talk the OpenAI chat-completions protocol under
+the hood, so no extra SDK is needed. Point the agent at one with
+`LLM_PROVIDER=…` (or `--provider …`), set the matching key, and run.
+
+### Switch to Groq (recommended)
+
+PowerShell (Windows):
+
+```powershell
+$env:GROQ_API_KEY  = "YOUR_GROQ_KEY"
+$env:LLM_PROVIDER  = "groq"
+$env:LLM_MODEL     = "openai/gpt-oss-120b"
+python run.py --data sample_data\uz_housing_sample.json
+```
+
+Command Prompt (Windows):
+
+```bat
+set GROQ_API_KEY=YOUR_GROQ_KEY
+set LLM_PROVIDER=groq
+set LLM_MODEL=openai/gpt-oss-120b
+python run.py --data sample_data\uz_housing_sample.json
+```
+
+Or on one command line:
+
+```powershell
+python run.py --data sample_data\uz_housing_sample.json ^
+              --provider groq --model openai/gpt-oss-120b --api-key YOUR_GROQ_KEY
+```
+
+### Switch to Gemini
+
+```powershell
+$env:GEMINI_API_KEY = "YOUR_GEMINI_KEY"
+$env:LLM_PROVIDER   = "gemini"
+$env:LLM_MODEL      = "gemini-2.5-flash"
+python run.py --data sample_data\uz_housing_sample.json
+```
+
+### Switch to OpenRouter
+
+```powershell
+$env:OPENROUTER_API_KEY = "YOUR_OPENROUTER_KEY"
+$env:LLM_PROVIDER       = "openrouter"
+$env:OPENROUTER_MODEL   = "openai/gpt-4.1-mini"   # any model OpenRouter exposes
+python run.py --data sample_data\uz_housing_sample.json
+```
+
+### Fallback behaviour
+
+With `LLM_FALLBACK_ENABLED=on` (the default), the agent tries the next free
+provider whose key is set when the primary one hits a rate limit, times
+out, or is otherwise unavailable. The preferred order is
+**Groq → Gemini → OpenRouter → OpenAI → Anthropic**, skipping any provider
+without a configured key. A deterministic failure (bad model id, invalid
+key, programmer error) is surfaced immediately rather than disguised
+behind a fallback. The run log in `outputs/runs/run_*.json` records which
+provider and model actually served the run and whether the fallback chain
+was used.
+
+Pass `--no-llm-fallback` to pin a provider for one run:
+
+```powershell
+python run.py --data sample_data\uz_housing_sample.json ^
+              --provider groq --no-llm-fallback
+```
+
+### Existing OpenAI / Anthropic setups
+
+Nothing changes for existing `.env` files that pin `MODEL=claude-opus-5`
+with `ANTHROPIC_API_KEY=…` (or the equivalent OpenAI pair). The legacy
+`MODEL` id continues to pick the vendor when `LLM_PROVIDER` is unset.
 
 ---
 
