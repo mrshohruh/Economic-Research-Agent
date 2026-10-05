@@ -1,4 +1,4 @@
-"""Runtime configuration, loaded from the environment / .env file."""
+"""Sozlamalar - .env fayldan yuklanadi."""
 
 from __future__ import annotations
 
@@ -14,19 +14,15 @@ from .llm import (
     provider_for,
 )
 
-try:  # python-dotenv is optional at import time
+try:
     from dotenv import load_dotenv
-
     load_dotenv()
-except Exception:  # pragma: no cover - dotenv missing is not fatal
+except Exception:
     pass
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-LANGUAGES = {"en": "English", "ru": "Russian", "uz": "Uzbek"}
-
-# All provider names the fallback chain can touch.
 SUPPORTED_PROVIDERS: tuple[str, ...] = tuple(ENV_KEY_FOR_PROVIDER.keys())
 
 
@@ -54,65 +50,33 @@ def _float_env(name: str, default: float) -> float:
 
 @dataclass
 class Settings:
-    """Everything the pipeline needs to know about how to run."""
+    """Barcha sozlamalar."""
 
-    # ------------------------------------------------------------------
-    # LLM credentials. Any one is enough; the fallback chain picks whichever
-    # provider is available when the primary one isn't.
-    # ------------------------------------------------------------------
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     groq_api_key: str = ""
     gemini_api_key: str = ""
     openrouter_api_key: str = ""
 
-    # Legacy model id (from the ``MODEL`` or ``ANTHROPIC_MODEL`` env vars).
-    # Still consulted so that existing .env files keep working. New callers
-    # should prefer ``LLM_PROVIDER`` + ``LLM_MODEL``.
     model: str = "claude-opus-5"
-
-    # Explicit provider override, from ``LLM_PROVIDER`` or ``--provider``.
-    # Empty means auto-detect from the model id and available keys.
     llm_provider_setting: str = ""
-    # Vendor-neutral model override, from ``LLM_MODEL`` or ``--model``.
-    # Can be a bare id (``openai/gpt-oss-120b``) or carry a provider prefix
-    # (``groq:openai/gpt-oss-120b``), in which case the prefix wins.
     llm_model_setting: str = ""
 
-    # Per-provider model overrides. A blank value means "use the provider's
-    # default from ``PROVIDER_DEFAULTS``".
     groq_model: str = ""
     gemini_model: str = ""
     openrouter_model: str = ""
 
-    # If true, when the chosen provider is unreachable (rate-limited, down,
-    # unauthorised at startup, etc.) the next free provider with a key is
-    # tried, in :data:`FALLBACK_ORDER`.
     fallback_enabled: bool = True
 
-    # ------------------------------------------------------------------
-    # Non-LLM pipeline settings
-    # ------------------------------------------------------------------
     web_research: bool = True
     search_results_per_query: int = 6
     pages_to_read: int = 3
-    language: str = "en"
     output_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "outputs")
     policy_file: Path = field(
         default_factory=lambda: PROJECT_ROOT / "knowledge" / "policy_events.json"
     )
     request_timeout: int = 20
-    # Uzbek property is advertised in both som and dollar-linked "у.е.", so a
-    # single rate is needed to put every listing on one currency. Set
-    # UZS_PER_USD to the rate that applied when the data was collected;
-    # otherwise a rerun of an old file is priced at today's rate.
     uzs_per_usd: float = 12_650.0
-    # A folder of quarterly dumps can hold several million adverts, which is
-    # more than a laptop can hold in memory at once. Rows above this budget are
-    # thinned evenly across the source and the report says so. 0 means no cap.
-    max_rows: int = 400_000
-    # Folder of archived OLX .db dumps for the quarterly history. Read one level
-    # only, so this names the folder holding the .db files, not a parent of it.
     olx_archive: str = ""
 
     @classmethod
@@ -121,13 +85,8 @@ class Settings:
         out_path = Path(out)
         if not out_path.is_absolute():
             out_path = PROJECT_ROOT / out_path
-        lang = (os.getenv("REPORT_LANGUAGE", "en") or "en").strip().lower()
-        if lang not in LANGUAGES:
-            lang = "en"
         provider_setting = (os.getenv("LLM_PROVIDER", "") or "").strip().lower()
         if provider_setting and provider_setting not in SUPPORTED_PROVIDERS:
-            # Treat an unknown provider name as if it was not set, rather than
-            # crashing. The pipeline logs the fallback that gets picked.
             provider_setting = ""
         return cls(
             anthropic_api_key=(os.getenv("ANTHROPIC_API_KEY", "") or "").strip(),
@@ -135,8 +94,6 @@ class Settings:
             groq_api_key=(os.getenv("GROQ_API_KEY", "") or "").strip(),
             gemini_api_key=(os.getenv("GEMINI_API_KEY", "") or "").strip(),
             openrouter_api_key=(os.getenv("OPENROUTER_API_KEY", "") or "").strip(),
-            # ``MODEL`` is the vendor-neutral legacy name; ``ANTHROPIC_MODEL``
-            # is still read so that existing .env files keep working.
             model=(
                 os.getenv("MODEL", "")
                 or os.getenv("ANTHROPIC_MODEL", "")
@@ -151,18 +108,12 @@ class Settings:
             web_research=_bool_env("WEB_RESEARCH", True),
             search_results_per_query=_int_env("SEARCH_RESULTS_PER_QUERY", 6),
             pages_to_read=_int_env("PAGES_TO_READ", 3),
-            language=lang,
             output_dir=out_path,
             uzs_per_usd=_float_env("UZS_PER_USD", 12_650.0),
-            max_rows=max(0, _int_env("MAX_ROWS", 400_000)),
             olx_archive=(os.getenv("OLX_ARCHIVE", "") or "").strip(),
         )
 
-    # ------------------------------------------------------------------
-    # Per-provider lookups
-    # ------------------------------------------------------------------
     def api_key_for(self, provider: str) -> str:
-        """The configured API key for a provider, or empty."""
         return {
             "anthropic":  self.anthropic_api_key,
             "openai":     self.openai_api_key,
@@ -172,13 +123,6 @@ class Settings:
         }.get(provider, "")
 
     def model_for(self, provider: str) -> str:
-        """The resolved model id for a provider.
-
-        For the "legacy" providers Anthropic and OpenAI this still honours
-        the pre-existing ``MODEL`` / ``ANTHROPIC_MODEL`` env var when it
-        names a model that belongs to this provider; otherwise it falls
-        back to the provider's default.
-        """
         if provider == self._primary_candidate_provider() and self.llm_model_setting:
             _, bare = parse_model_id(self.llm_model_setting)
             if bare:
@@ -198,20 +142,9 @@ class Settings:
         return PROVIDER_DEFAULTS.get(provider, {}).get("model", "")
 
     def base_url_for(self, provider: str) -> str | None:
-        """Each provider's OpenAI-compatible base URL (``None`` when native)."""
         return PROVIDER_DEFAULTS.get(provider, {}).get("base_url")
 
-    # ------------------------------------------------------------------
-    # Resolved primary provider / model
-    # ------------------------------------------------------------------
     def _primary_explicit_provider(self) -> str:
-        """The provider explicitly chosen in configuration.
-
-        An empty return means the user did not state a provider in
-        ``LLM_PROVIDER`` or as a prefix on ``LLM_MODEL``, and the resolver
-        is free to pick one from the legacy ``MODEL`` id or the set of
-        configured keys.
-        """
         if self.llm_provider_setting:
             return self.llm_provider_setting
         if self.llm_model_setting:
@@ -221,11 +154,6 @@ class Settings:
         return ""
 
     def _primary_candidate_provider(self) -> str:
-        """Backward-compatible primary candidate used by :meth:`model_for`.
-
-        Mirrors the old two-vendor rule: an explicit choice first, then the
-        legacy ``MODEL`` id's provider if its prefix identifies one.
-        """
         explicit = self._primary_explicit_provider()
         if explicit:
             return explicit
@@ -239,13 +167,6 @@ class Settings:
 
     @property
     def provider(self) -> str:
-        """Which vendor the pipeline should call first.
-
-        Precedence: explicit ``LLM_PROVIDER`` > provider-tagged
-        ``LLM_MODEL`` > a legacy ``MODEL`` id that unambiguously names a
-        vendor > the first configured free-provider key > ``anthropic`` as
-        the historical default.
-        """
         explicit = self._primary_explicit_provider()
         if explicit:
             return explicit
@@ -253,9 +174,6 @@ class Settings:
         if legacy and (self.api_key_for(legacy) or not any(
             self.api_key_for(name) for name in FALLBACK_ORDER
         )):
-            # Honour an existing .env that pins MODEL=claude-* when that
-            # provider's key is set, and keep the legacy default when no
-            # alternative key exists either.
             return legacy
         for name in FALLBACK_ORDER:
             if self.api_key_for(name):
@@ -264,34 +182,23 @@ class Settings:
 
     @property
     def llm_model(self) -> str:
-        """The resolved model id the chosen provider will be called with."""
         return self.model_for(self.provider)
 
     @property
     def llm_api_key(self) -> str:
-        """The API key for the chosen provider, or empty."""
         return self.api_key_for(self.provider)
 
     @property
     def llm_key_name(self) -> str:
-        """The environment variable that holds the chosen provider's key."""
         return ENV_KEY_FOR_PROVIDER.get(self.provider, "API_KEY")
 
     @property
     def llm_enabled(self) -> bool:
-        """Any provider has a key — primary or (when enabled) a fallback."""
         if self.llm_api_key:
             return True
         if self.fallback_enabled:
             return any(self.api_key_for(name) for name in FALLBACK_ORDER)
         return False
-
-    # ------------------------------------------------------------------
-    # Output locations
-    # ------------------------------------------------------------------
-    @property
-    def figures_dir(self) -> Path:
-        return self.output_dir / "figures"
 
     @property
     def reports_dir(self) -> Path:
@@ -305,12 +212,16 @@ class Settings:
     def tables_dir(self) -> Path:
         return self.output_dir / "tables"
 
+    @property
+    def snapshots_dir(self) -> Path:
+        return self.output_dir / "olx_snapshots"
+
     def ensure_dirs(self) -> None:
         for path in (
             self.output_dir,
-            self.figures_dir,
             self.reports_dir,
             self.runs_dir,
             self.tables_dir,
+            self.snapshots_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)

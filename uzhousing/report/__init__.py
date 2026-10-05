@@ -1,5 +1,5 @@
-"""Narrative generation and Word document assembly."""
+"""Hisobot yaratish moduli."""
 
-from . import composer, docx_builder, narrative
+from . import olx_bulletin
 
-__all__ = ["narrative", "docx_builder", "composer"]
+__all__ = ["olx_bulletin"]
